@@ -1,6 +1,7 @@
 #! /usr/bin/env python
 
 import os
+import glob
 import re
 __path__ = (os.path.dirname(__file__), )
 with open(os.path.join(__path__[0], '__init__.py')) as f:
@@ -9,7 +10,6 @@ with open(os.path.join(__path__[0], '__init__.py')) as f:
 import sys
 import ast
 import json
-import copy
 import logging
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -20,6 +20,7 @@ warnings.simplefilter(action='ignore', category=RuntimeWarning)
 import subprocess
 import random
 random.seed(0)
+import cv2
 import numpy as np
 np.random.seed(0)
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
@@ -58,7 +59,8 @@ def convert(
     output_weights: Optional[bool] = False,
     output_integer_quantized_tflite: Optional[bool] = False,
     quant_type: Optional[str] = 'per-channel',
-    quant_calib_input_op_name_np_data_path: Optional[List] = None,
+    quant_calib_data_path: Optional[str] = None,
+    quant_calib_data_num: Optional[int] = 500,
     input_output_quant_dtype: Optional[str] = 'int8',
     not_use_onnxsim: Optional[bool] = False,
     not_use_opname_auto_generate: Optional[bool] = False,
@@ -132,59 +134,11 @@ def convert(
         Selects whether "per-channel" or "per-tensor" quantization is used.\n
         Default: "per-channel"
 
-    quant_calib_input_op_name_np_data_path: Optional[List]
-        INPUT Name of OP and path of calibration data file (Numpy) for quantization\n
-        and mean and std.\n
-        The specification can be omitted only when the input OP is a single 4D tensor image data.\n
-        If omitted, it is automatically calibrated using 20 normalized MS-COCO images.\n
-        The type of the input OP must be Float32.\n
-        Data for calibration must be pre-normalized to a range of 0 to 1.\n
-        [\n
-            [{input_op_name: str} {numpy_file_path: str} {mean: np.ndarray} {std: np.ndarray}],\n
-            [{input_op_name: str} {numpy_file_path: str} {mean: np.ndarray} {std: np.ndarray}],\n
-            [{input_op_name: str} {numpy_file_path: str} {mean: np.ndarray} {std: np.ndarray}],\n
-            :\n
-        ]\n
-        Numpy file paths must be specified the same number of times as the number of input OPs.\n
-        Normalize the value of the input OP based on the tensor specified in mean and std.\n
-        (input_value - mean) / std\n
-        Tensors in Numpy file format must be in dimension order after conversion to TF.\n
-        Note that this is intended for deployment on low-resource devices,\n
-        so the batch size is limited to 1 only.\n\n
-        e.g.\n
-        The example below shows a case where there are three input OPs.\n
-        Assume input0 is 128x128 RGB image data.\n
-        In addition, input0 should be a value that has been divided by 255\n
-        in the preprocessing and normalized to a range between 0 and 1.\n
-        input1 and input2 assume the input of something that is not an image.\n
-        Because input1 and input2 assume something that is not an image,\n
-        the divisor is not 255 when normalizing from 0 to 1.\n
-        "n" is the number of calibration data.\n\n
-        ONNX INPUT shapes:\n
-            input0: [n,3,128,128]\n
-                mean: [1,3,1,1] -> [[[[0.485]],[[0.456]],[[0.406]]]]\n
-                std:  [1,3,1,1] -> [[[[0.229]],[[0.224]],[[0.225]]]]\n
-            input1: [n,64,64]\n
-                mean: [1,64] -> [0.1, ..., 0.64]\n
-                std:  [1,64] -> [0.05, ..., 0.08]\n
-            input2: [n,5]\n
-                mean: [1] -> [0.3]\n
-                std:  [1] -> [0.07]\n
-        TensorFlow INPUT shapes (Numpy file ndarray shapes):\n
-            input0: [n,128,128,3]\n
-                mean: [1,1,1,3] -> [[[[0.485, 0.456, 0.406]]]]\n
-                std:  [1,1,1,3] -> [[[[0.229, 0.224, 0.225]]]]\n
-            input1: [n,64,64]\n
-                mean: [1,64] -> [0.1, ..., 0.64]\n
-                std:  [1,64] -> [0.05, ..., 0.08]\n
-            input2: [n,5]\n
-                mean: [1] -> [0.3]\n
-                std:  [1] -> [0.07]\n
-        qcind=[
-            ["input0","../input0.npy",[[[[0.485, 0.456, 0.406]]]],[[[[0.229, 0.224, 0.225]]]]],\n
-            ["input1","./input1.npy",[0.1, ..., 0.64],[0.05, ..., 0.08]],\n
-            ["input2","input2.npy",[0.3],[0.07]],\n
-        ]
+    quant_calib_data_path: Optional[str]
+        Path of calibration data file for quantization
+
+    quant_calib_data_num: Optional[int]
+        Number of calibration data file for quantization
 
     input_output_quant_dtype: Optional[str]
         Input and Output dtypes when doing Full INT8 Quantization.\n
@@ -653,7 +607,7 @@ def convert(
             """
             # AUTO calib 4D check
             if output_integer_quantized_tflite \
-                and quant_calib_input_op_name_np_data_path is None \
+                and quant_calib_data_path is None \
                 and (graph_input.dtype != np.float32 or len(graph_input.shape) != 4):
                 print(
                     f'{Color.RED}ERROR:{Color.RESET} ' +
@@ -840,8 +794,6 @@ def convert(
                     )
 
         # Quantized TFLite
-        MEAN = np.asarray([[[[0.485, 0.456, 0.406]]]], dtype=np.float32)
-        STD = np.asarray([[[[0.229, 0.224, 0.225]]]], dtype=np.float32)
         if output_integer_quantized_tflite:
             # Dynamic Range Quantization
             try:
@@ -872,68 +824,33 @@ def convert(
                         'Dynamic Range Quantization tflite output failed.'
                     )
 
-            # Download sample calibration data - MS-COCO x20 images
-            # Used only when there is only one input OP, a 4D tensor image,
-            # and --quant_calib_input_op_name_np_data_path is not specified.
-            # Otherwise, calibrate using the data specified in --quant_calib_input_op_name_np_data_path.
-            calib_data_dict = {}
-            model_input_name_list = [
-                model_input.name for model_input in model.inputs
-            ]
-            data_count = 0
-            if quant_calib_input_op_name_np_data_path is None \
-                and model.inputs[0].dtype == tf.float32 \
-                and len(model.inputs[0].shape) == 4:
-
-                # AUTO calib 4D images
-                calib_data: np.ndarray = download_test_image_data()
-                data_count = calib_data.shape[0]
-                for model_input in model.inputs:
-                    calib_data_dict[model_input.name] = \
-                        [
-                            tf.image.resize(
-                                calib_data.copy(),
-                                (model_input.shape[1], model_input.shape[2])
-                            ),
-                            MEAN,
-                            STD,
-                        ]
-            elif quant_calib_input_op_name_np_data_path is not None:
-                for param in quant_calib_input_op_name_np_data_path:
-                    input_op_name = str(param[0])
-                    numpy_file_path = str(param[1])
-                    calib_data = np.load(numpy_file_path)
-                    if data_count == 0:
-                        data_count = calib_data.shape[0]
-                    mean = param[2]
-                    std = param[3]
-                    calib_data_dict[input_op_name] = \
-                        [
-                            calib_data.copy(),
-                            mean,
-                            std,
-                        ]
-
             # representative_dataset_gen
-            def representative_dataset_gen():
-                for idx in range(data_count):
+            def representative_dataset_gen(data_path, num=500):
+                image_paths = glob.glob(data_path + os.sep + "*.jpg")
+                random.shuffle(image_paths)
+                image_paths = image_paths[:num]
+
+                for image_path in image_paths:
                     calib_data_list = []
-                    for model_input_name in model_input_name_list:
-                        calib_data, mean, std = calib_data_dict[model_input_name]
-                        normalized_calib_data = (calib_data[idx] - mean) / std
-                        calib_data_list.append(normalized_calib_data)
+                    img = cv2.imread(image_path)
+                    for model_input in model.inputs:
+                        img = cv2.resize(img, (model_input.shape[2], model_input.shape[1]))
+                        img = img[..., ::-1]  # BGR->RGB
+                        img = img[np.newaxis, ...].astype(np.float32) / 1.0
+                        calib_data_list.append(img)
                     yield calib_data_list
 
             # INT8 Quantization
             try:
                 converter.optimizations = [tf.lite.Optimize.DEFAULT]
+                converter.target_spec.supported_types = []
                 converter.target_spec.supported_ops = [
                     tf.lite.OpsSet.TFLITE_BUILTINS_INT8,
                     tf.lite.OpsSet.SELECT_TF_OPS,
                 ]
                 converter._experimental_disable_per_channel = disable_per_channel
                 converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
-                converter.representative_dataset = representative_dataset_gen
+                converter.representative_dataset = lambda: representative_dataset_gen(quant_calib_data_path, quant_calib_data_num)
                 tflite_model = converter.convert()
                 with open(f'{output_folder_path}/model_integer_quant.tflite', 'wb') as w:
                     w.write(tflite_model)
@@ -947,13 +864,14 @@ def convert(
 
                 # Full Integer Quantization
                 converter.optimizations = [tf.lite.Optimize.DEFAULT]
+                converter.target_spec.supported_types = []
                 converter.target_spec.supported_ops = [
                     tf.lite.OpsSet.TFLITE_BUILTINS_INT8,
                     tf.lite.OpsSet.SELECT_TF_OPS,
                 ]
                 converter._experimental_disable_per_channel = disable_per_channel
                 converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
-                converter.representative_dataset = representative_dataset_gen
+                converter.representative_dataset = lambda: representative_dataset_gen(quant_calib_data_path, quant_calib_data_num)
                 inf_type = None
                 if input_output_quant_dtype == 'int8':
                     inf_type = tf.int8
@@ -992,7 +910,7 @@ def convert(
                 ]
                 converter._experimental_disable_per_channel = disable_per_channel
                 converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
-                converter.representative_dataset = representative_dataset_gen
+                converter.representative_dataset = lambda: representative_dataset_gen(quant_calib_data_path, quant_calib_data_num)
                 converter.inference_input_type = tf.float32
                 converter.inference_output_type = tf.float32
                 tflite_model = converter.convert()
@@ -1019,7 +937,7 @@ def convert(
                 ]
                 converter._experimental_disable_per_channel = disable_per_channel
                 converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
-                converter.representative_dataset = representative_dataset_gen
+                converter.representative_dataset = lambda: representative_dataset_gen(quant_calib_data_path, quant_calib_data_num)
                 converter.inference_input_type = tf.int16
                 converter.inference_output_type = tf.int16
                 tflite_model = converter.convert()
@@ -1266,57 +1184,19 @@ def main():
             'Default: "per-channel"'
     )
     parser.add_argument(
-        '-qcind',
-        '--quant_calib_input_op_name_np_data_path',
+        '-qcdp',
+        '--quant_calib_data_path',
         type=str,
-        action='append',
-        nargs=4,
+        required=True,
         help=\
-            'INPUT Name of OP and path of calibration data file (Numpy) for quantization \n' +
-            'and mean and std. \n' +
-            'The specification can be omitted only when the input OP is a single 4D tensor image data. \n' +
-            'If omitted, it is automatically calibrated using 20 normalized MS-COCO images. \n' +
-            'The type of the input OP must be Float32. \n' +
-            'Data for calibration must be pre-normalized to a range of 0 to 1. \n' +
-            '-qcind {input_op_name} {numpy_file_path} {mean} {std} \n' +
-            'Numpy file paths must be specified the same number of times as the number of input OPs. \n' +
-            'Normalize the value of the input OP based on the tensor specified in mean and std. \n' +
-            '(input_value - mean) / std \n' +
-            'Tensors in Numpy file format must be in dimension order after conversion to TF. \n' +
-            'Note that this is intended for deployment on low-resource devices, \n' +
-            'so the batch size is limited to 1 only. \n\n' +
-            'e.g. \n' +
-            'The example below shows a case where there are three input OPs. \n' +
-            'Assume input0 is 128x128 RGB image data. \n' +
-            'In addition, input0 should be a value that has been divided by 255 \n' +
-            'in the preprocessing and normalized to a range between 0 and 1. \n' +
-            'input1 and input2 assume the input of something that is not an image. \n' +
-            'Because input1 and input2 assume something that is not an image, \n' +
-            'the divisor is not 255 when normalizing from 0 to 1. \n' +
-            '"n" is the number of calibration data. \n\n' +
-            'ONNX INPUT shapes: \n' +
-            '   input0: [n,3,128,128] \n' +
-            '       mean: [1,3,1,1] -> [[[[0.485]],[[0.456]],[[0.406]]]] \n' +
-            '       std:  [1,3,1,1] -> [[[[0.229]],[[0.224]],[[0.225]]]] \n' +
-            '   input1: [n,64,64] \n' +
-            '       mean: [1,64] -> [0.1, ..., 0.64] \n' +
-            '       std:  [1,64] -> [0.05, ..., 0.08] \n' +
-            '   input2: [n,5] \n' +
-            '       mean: [1] -> [0.3] \n' +
-            '       std:  [1] -> [0.07] \n' +
-            'TensorFlow INPUT shapes (Numpy file ndarray shapes): \n' +
-            '   input0: [n,128,128,3] \n' +
-            '       mean: [1,1,1,3] -> [[[[0.485, 0.456, 0.406]]]] \n' +
-            '       std:  [1,1,1,3] -> [[[[0.229, 0.224, 0.225]]]] \n' +
-            '   input1: [n,64,64] \n' +
-            '       mean: [1,64] -> [0.1, ..., 0.64] \n' +
-            '       std:  [1,64] -> [0.05, ..., 0.08] \n' +
-            '   input2: [n,5] \n' +
-            '       mean: [1] -> [0.3] \n' +
-            '       std:  [1] -> [0.07] \n' +
-            '-qcind "input0" "../input0.npy" [[[[0.485, 0.456, 0.406]]]] [[[[0.229, 0.224, 0.225]]]] \n' +
-            '-qcind "input1" "./input1.npy" [0.1, ..., 0.64] [0.05, ..., 0.08] \n' +
-            '-qcind "input2" "input2.npy" [0.3] [0.07]'
+            'Path of calibration data file for quantization.'
+    )
+    parser.add_argument(
+        '-qcdn',
+        '--quant_calib_data_num',
+        type=int,
+        help=\
+            'Number of calibration data file for quantization.'
     )
     parser.add_argument(
         '-ioqd',
@@ -1675,25 +1555,6 @@ def main():
         print(__version__)
         sys.exit(0)
 
-    # convert quant_calib_input_op_name_np_data_path
-    # [
-    #   [{input_op_name} {numpy_file_path} {mean} {std}],
-    #   [{input_op_name} {numpy_file_path} {mean} {std}],
-    #   [{input_op_name} {numpy_file_path} {mean} {std}],
-    # ]
-    calib_params = []
-    if args.quant_calib_input_op_name_np_data_path is not None:
-        for param in args.quant_calib_input_op_name_np_data_path:
-            input_op_name = str(param[0])
-            numpy_file_path = str(param[1])
-            mean = np.asarray(ast.literal_eval(param[2]), dtype=np.float32)
-            std = np.asarray(ast.literal_eval(param[3]), dtype=np.float32)
-            calib_params.append(
-                [input_op_name, numpy_file_path, mean, std]
-            )
-    if len(calib_params) == 0:
-        calib_params = None
-
     # Convert
     model = convert(
         input_onnx_file_path=args.input_onnx_file_path,
@@ -1703,7 +1564,8 @@ def main():
         output_weights=args.output_weights,
         output_integer_quantized_tflite=args.output_integer_quantized_tflite,
         quant_type=args.quant_type,
-        quant_calib_input_op_name_np_data_path=calib_params,
+        quant_calib_data_path=args.quant_calib_data_path,
+        quant_calib_data_num=args.quant_calib_data_num,
         input_output_quant_dtype=args.input_output_quant_dtype,
         not_use_onnxsim=args.not_use_onnxsim,
         not_use_opname_auto_generate=args.not_use_opname_auto_generate,
