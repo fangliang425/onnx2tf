@@ -133,6 +133,7 @@ def make_node(
             padding_ = "valid"
             break
 
+    tmp_pad = None
     if padding_ == "valid" and calc_pads is not None and np.sum(calc_pads) > 0:
         tmp_pad = \
             [[0,0]] + \
@@ -141,16 +142,11 @@ def make_node(
                     for pad_begin, pad_end in zip(calc_pads[0:spatial_size], calc_pads[spatial_size:len(calc_pads)])
             ] + \
             [[0,0]]
-        # Padding in `SYMMETRIC` mode will cause an error if the padding size is larger than the input size,
-        # so replace `CONSTANT` with `SYMMETRIC`
-        symmetric_enable_check = [
-            True if pad_size[0] <= input_tensor.shape[dim+1] and pad_size[1] <= input_tensor.shape[dim+1] else False \
-                for dim, pad_size in enumerate(tmp_pad[1:spatial_size])
-        ]
         padded_tensor = tf.pad(
             tensor=input_tensor,
             paddings=tmp_pad,
-            mode='SYMMETRIC' if False not in symmetric_enable_check else 'CONSTANT',
+            mode='CONSTANT',
+            constant_values=-np.inf,
         )
 
     # Preserving Graph Structure (Dict)
@@ -171,11 +167,65 @@ def make_node(
         tf_op_type = AveragePooling1D
 
     elif len(kernel_shape) == 2:
-        pooled_tensor = AveragePooling2D(
-            pool_size=kernel_shape,
-            strides=strides,
-            padding=padding_.upper(),
-        )(padded_tensor)
+        if tmp_pad is None:
+            pooled_tensor = AveragePooling2D(
+                pool_size=kernel_shape,
+                strides=strides,
+                padding=padding_.upper(),
+            )(padded_tensor)
+            tf_op_type = AveragePooling2D
+        else:
+            def avg_pool(x):
+                n_channel = x.shape[-1]
+                patches = tf.image.extract_patches(
+                    images=x,
+                    sizes=[1,kernel_shape[0],kernel_shape[1],1],
+                    strides=[1,strides[0],strides[1],1],
+                    rates=[1,1,1,1],
+                    padding='VALID',
+                )
+                mask = tf.math.not_equal(patches[:,:,:,0::n_channel], tf.constant(-np.inf, dtype=patches.dtype))
+                mn,mh,mw,mc = mask.shape
+                channel_avg_pool = []
+                for c in range(n_channel):
+                    patch = patches[:,:,:,c::n_channel]
+                    """
+                    [           -inf,            -inf,            -inf,
+                                -inf,  1.76405235e+00, -1.61389785e+00,
+                                -inf, -6.36614888e-02, -8.74662522e-01
+                    ],
+                    [           -inf,            -inf,            -inf,
+                                -1.61389785e+00,  1.05000207e-02,  2.38314477e+00,
+                                -8.74662522e-01, -2.21574398e-01, -3.21258937e-01
+                    ],
+                    [           -inf,            -inf,            -inf,
+                                2.38314477e+00, -3.92828182e-02, -6.37437026e-01,
+                                -3.21258937e-01,  4.61468877e-01,  1.06160017e+00
+                    ],
+                    :
+                    """
+                    patch_means_all = []
+                    for i in range(mn):
+                        patch_means_mh = []
+                        for j in range(mh):
+                            patch_means_mw = []
+                            for k in range(mw):
+                                patch_mask = tf.squeeze(tf.where(mask[i,j,k]), axis=1)
+                                patch_part = tf.gather(patch[i,j,k], patch_mask)
+                                patch_part_mean = tf.reduce_mean(patch_part)
+                                patch_means_mw.append(patch_part_mean)
+                            patch_means_mh.append(patch_means_mw)
+                        patch_means_all.append(patch_means_mh)
+                    patch_means_all_concat = tf.concat(patch_means_all, axis=1)
+                    # non_zero_avg: [22, 22]
+                    non_zero_avg = tf.expand_dims(patch_means_all_concat, axis=0)
+                    non_zero_avg = tf.expand_dims(non_zero_avg, axis=3)
+                    channel_avg_pool.append(non_zero_avg)
+                concated_tensor = tf.concat(channel_avg_pool, axis=-1)
+                return concated_tensor
+
+            pooled_tensor = avg_pool(padded_tensor)
+
         tf_op_type = AveragePooling2D
 
     elif len(kernel_shape) == 3:
