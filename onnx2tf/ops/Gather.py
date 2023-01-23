@@ -15,6 +15,7 @@ from onnx2tf.utils.common_functions import (
     pre_process_transpose,
     post_process_transpose,
 )
+from onnx2tf.utils.enums import NUMPY_DTYPES_TO_TF_DTYPES
 
 
 @print_node_info
@@ -69,8 +70,24 @@ def make_node(
         before_op_output_shape_trans=before_op_output_shape_trans,
     )
 
+    optimization_for_gpu_delegate: bool = \
+        kwargs['optimization_for_gpu_delegate']
+
     # tensorflow gather supports only positive indices
-    indices = tf.cast(indices, tf.int64) + tf.cast(tf.where(indices < 0, 1, 0) * tf.shape(input_tensor)[axis], tf.int64)
+    out_dtype = NUMPY_DTYPES_TO_TF_DTYPES[indices.dtype] \
+        if isinstance(indices.dtype, np.dtype) else indices.dtype
+    if not optimization_for_gpu_delegate:
+        cond = tf.cast(indices < 0, dtype=out_dtype)
+        indices = tf.cast(
+            indices + cond * tf.shape(input_tensor, out_type=out_dtype)[axis],
+            dtype=out_dtype,
+        )
+    else:
+        cond = indices < 0
+        indices = indices + tf.cast(
+            tf.where(cond, 1, 0) * tf.shape(input_tensor, out_type=out_dtype)[axis],
+            dtype=out_dtype,
+        )
 
     # Preserving Graph Structure (Dict)
     tf_layers_dict[graph_node_output.name] = {

@@ -381,6 +381,15 @@ def convert(
         )
         sys.exit(1)
 
+    # Extracting onnx filenames
+    output_file_name = ''
+    if input_onnx_file_path:
+        output_file_name = os.path.splitext(
+            os.path.basename(input_onnx_file_path)
+        )[0]
+    else:
+        output_file_name = 'model'
+
     # batch_size
     if batch_size is not None and batch_size <= 0:
         print(
@@ -688,7 +697,7 @@ def convert(
         if output_h5:
             if not non_verbose:
                 print(f'{Color.REVERCE}h5 output started{Color.RESET}', '=' * 67)
-            model.save(f'{output_folder_path}/model_float32.h5')
+            model.save(f'{output_folder_path}/{output_file_name}_float32.h5')
             if not non_verbose:
                 print(f'{Color.GREEN}h5 output complete!{Color.RESET}')
 
@@ -757,12 +766,12 @@ def convert(
         ]
         converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
         tflite_model = converter.convert()
-        with open(f'{output_folder_path}/model_float32.tflite', 'wb') as w:
+        with open(f'{output_folder_path}/{output_file_name}_float32.tflite', 'wb') as w:
             w.write(tflite_model)
         if output_weights:
             weights_export(
-                extract_target_tflite_file_path=f'{output_folder_path}/model_float32.tflite',
-                output_weights_file_path=f'{output_folder_path}/model_float32_weights.h5',
+                extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_float32.tflite',
+                output_weights_file_path=f'{output_folder_path}/{output_file_name}_float32_weights.h5',
             )
         if not non_verbose:
             print(f'{Color.GREEN}Float32 tflite output complete!{Color.RESET}')
@@ -774,12 +783,12 @@ def convert(
             tf.lite.OpsSet.SELECT_TF_OPS,
         ]
         tflite_model = converter.convert()
-        with open(f'{output_folder_path}/model_float16.tflite', 'wb') as w:
+        with open(f'{output_folder_path}/{output_file_name}_float16.tflite', 'wb') as w:
             w.write(tflite_model)
         if output_weights:
             weights_export(
-                extract_target_tflite_file_path=f'{output_folder_path}/model_float16.tflite',
-                output_weights_file_path=f'{output_folder_path}/model_float16_weights.h5',
+                extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_float16.tflite',
+                output_weights_file_path=f'{output_folder_path}/{output_file_name}_float16_weights.h5',
             )
         if not non_verbose:
             print(f'{Color.GREEN}Float16 tflite output complete!{Color.RESET}')
@@ -815,12 +824,12 @@ def convert(
                 converter._experimental_disable_per_channel = disable_per_channel
                 converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
                 tflite_model = converter.convert()
-                with open(f'{output_folder_path}/model_dynamic_range_quant.tflite', 'wb') as w:
+                with open(f'{output_folder_path}/{output_file_name}_dynamic_range_quant.tflite', 'wb') as w:
                     w.write(tflite_model)
                 if output_weights:
                     weights_export(
-                        extract_target_tflite_file_path=f'{output_folder_path}/model_dynamic_range_quant.tflite',
-                        output_weights_file_path=f'{output_folder_path}/model_dynamic_range_quant_weights.h5',
+                        extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_dynamic_range_quant.tflite',
+                        output_weights_file_path=f'{output_folder_path}/{output_file_name}_dynamic_range_quant_weights.h5',
                     )
                 if not non_verbose:
                     print(f'{Color.GREEN}Dynamic Range Quantization tflite output complete!{Color.RESET}')
@@ -861,12 +870,12 @@ def convert(
                 converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
                 converter.representative_dataset = lambda: representative_dataset_gen(quant_calib_data_path, quant_calib_data_num)
                 tflite_model = converter.convert()
-                with open(f'{output_folder_path}/model_integer_quant.tflite', 'wb') as w:
+                with open(f'{output_folder_path}/{output_file_name}_integer_quant.tflite', 'wb') as w:
                     w.write(tflite_model)
                 if output_weights:
                     weights_export(
-                        extract_target_tflite_file_path=f'{output_folder_path}/model_integer_quant.tflite',
-                        output_weights_file_path=f'{output_folder_path}/model_integer_quant_weights.h5',
+                        extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_integer_quant.tflite',
+                        output_weights_file_path=f'{output_folder_path}/{output_file_name}_integer_quant_weights.h5',
                     )
                 if not non_verbose:
                     print(f'{Color.GREEN}INT8 Quantization tflite output complete!{Color.RESET}')
@@ -891,12 +900,12 @@ def convert(
                 converter.inference_input_type = inf_type
                 converter.inference_output_type = inf_type
                 tflite_model = converter.convert()
-                with open(f'{output_folder_path}/model_full_integer_quant.tflite', 'wb') as w:
+                with open(f'{output_folder_path}/{output_file_name}_full_integer_quant.tflite', 'wb') as w:
                     w.write(tflite_model)
                 if output_weights:
                     weights_export(
-                        extract_target_tflite_file_path=f'{output_folder_path}/model_full_integer_quant.tflite',
-                        output_weights_file_path=f'{output_folder_path}/model_full_integer_quant_weights.h5',
+                        extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_full_integer_quant.tflite',
+                        output_weights_file_path=f'{output_folder_path}/{output_file_name}_full_integer_quant_weights.h5',
                     )
                 if not non_verbose:
                     print(f'{Color.GREEN}Full INT8 Quantization tflite output complete!{Color.RESET}')
@@ -923,7 +932,7 @@ def convert(
                 converter.inference_input_type = tf.float32
                 converter.inference_output_type = tf.float32
                 tflite_model = converter.convert()
-                with open(f'{output_folder_path}/model_integer_quant_with_int16_act.tflite', 'wb') as w:
+                with open(f'{output_folder_path}/{output_file_name}_integer_quant_with_int16_act.tflite', 'wb') as w:
                     w.write(tflite_model)
                 if not non_verbose:
                     print(f'{Color.GREEN}INT8 Quantization with int16 activations tflite output complete!{Color.RESET}')
@@ -950,7 +959,7 @@ def convert(
                 converter.inference_input_type = tf.int16
                 converter.inference_output_type = tf.int16
                 tflite_model = converter.convert()
-                with open(f'{output_folder_path}/model_full_integer_quant_with_int16_act.tflite', 'wb') as w:
+                with open(f'{output_folder_path}/{output_file_name}_full_integer_quant_with_int16_act.tflite', 'wb') as w:
                     w.write(tflite_model)
                 if not non_verbose:
                     print(f'{Color.GREEN}Full INT8 Quantization with int16 activations tflite output complete!{Color.RESET}')
@@ -1002,6 +1011,8 @@ def convert(
             #   output_names,
             #         :
             # ]
+
+            # Output OP extended to all ONNX nodes
             if check_onnx_tf_outputs_elementwise_close_full:
                 ops_output_names = []
                 for graph_node in graph.nodes:
@@ -1011,6 +1022,28 @@ def convert(
                     ops_output_names.extend(ops_output_names_sub)
             else:
                 ops_output_names = output_names
+
+            # Rebuild model for validation
+            del model
+            outputs = [
+                layer_info['tf_node'] \
+                    for opname, layer_info in tf_layers_dict.items() \
+                        if opname in ops_output_names \
+                            and not hasattr(layer_info['tf_node'], 'numpy')
+            ]
+            exclude_output_names = [
+                opname \
+                    for opname, layer_info in tf_layers_dict.items() \
+                        if opname in ops_output_names \
+                            and hasattr(layer_info['tf_node'], 'numpy')
+            ]
+            model = tf.keras.Model(inputs=inputs, outputs=outputs)
+
+            # Exclude output OPs not subject to validation
+            ops_output_names = [
+                ops_output_name for ops_output_name in ops_output_names \
+                    if ops_output_name not in exclude_output_names
+            ]
 
             # download test data
             all_four_dim = sum(
@@ -1045,20 +1078,6 @@ def convert(
                 test_data_nhwc=test_data_nhwc,
             )
             # TF dummy inference
-            del model
-            outputs = [
-                layer_info['tf_node'] \
-                    for opname, layer_info in tf_layers_dict.items() \
-                        if opname in ops_output_names \
-                            and not hasattr(layer_info['tf_node'], 'numpy')
-            ]
-            exclude_output_names = [
-                opname \
-                    for opname, layer_info in tf_layers_dict.items() \
-                        if opname in ops_output_names \
-                            and hasattr(layer_info['tf_node'], 'numpy')
-            ]
-            model = tf.keras.Model(inputs=inputs, outputs=outputs)
             dummy_tf_outputs: List[Any] = dummy_tf_inference(
                 model=model,
                 inputs=inputs,
@@ -1073,8 +1092,11 @@ def convert(
             # Validation
             onnx_tensor_infos = {
                 output_name: dummy_onnx_output \
-                    for output_name, dummy_onnx_output in zip(ops_output_names, dummy_onnx_outputs) \
-                        if output_name not in exclude_output_names
+                    for output_name, dummy_onnx_output in zip(ops_output_names, dummy_onnx_outputs)
+            }
+            tf_tensor_infos = {
+                output_name: dummy_tf_output \
+                    for output_name, dummy_tf_output in zip(ops_output_names, dummy_tf_outputs)
             }
             """
             np.allclose(
@@ -1089,14 +1111,14 @@ def convert(
                 {
                     onnx_output_name: [
                         onnx_tensor,
-                        matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped
+                        matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched)
                         max_abs_err,
                     ]
                 }
             """
             check_results = onnx_tf_tensor_validation(
                 onnx_tensor_infos=onnx_tensor_infos,
-                tf_tensors=dummy_tf_outputs,
+                tf_tensor_infos=tf_tensor_infos,
                 rtol=check_onnx_tf_outputs_elementwise_close_rtol,
                 atol=check_onnx_tf_outputs_elementwise_close_atol,
             )
@@ -1117,7 +1139,7 @@ def convert(
                 elif matched_flg == 2:
                     message = \
                         f'{Color.GREEN}validate_result{Color.RESET}: ' +\
-                        f'{Color.REVERCE}{Color.BLUE} Skipped {Color.RESET}'
+                        f'{Color.REVERCE}{Color.BLUE} Skipped (Deleted or Shape Unmatched) {Color.RESET}'
                 print(
                     f'{Color.GREEN}INFO:{Color.RESET} '+
                     f'{Color.GREEN}onnx_output_name{Color.RESET}: {onnx_output_name} '+
