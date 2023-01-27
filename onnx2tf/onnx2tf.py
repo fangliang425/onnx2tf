@@ -860,25 +860,26 @@ def convert(
 
             # INT8 Quantization
             try:
-                converter.optimizations = [tf.lite.Optimize.DEFAULT]
-                converter.target_spec.supported_types = []
-                converter.target_spec.supported_ops = [
-                    tf.lite.OpsSet.TFLITE_BUILTINS_INT8,
-                    tf.lite.OpsSet.SELECT_TF_OPS,
-                ]
-                converter._experimental_disable_per_channel = disable_per_channel
-                converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
-                converter.representative_dataset = lambda: representative_dataset_gen(quant_calib_data_path, quant_calib_data_num)
-                tflite_model = converter.convert()
-                with open(f'{output_folder_path}/{output_file_name}_integer_quant.tflite', 'wb') as w:
-                    w.write(tflite_model)
-                if output_weights:
-                    weights_export(
-                        extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_integer_quant.tflite',
-                        output_weights_file_path=f'{output_folder_path}/{output_file_name}_integer_quant_weights.h5',
-                    )
-                if not non_verbose:
-                    print(f'{Color.GREEN}INT8 Quantization tflite output complete!{Color.RESET}')
+                if False:
+                    converter.optimizations = [tf.lite.Optimize.DEFAULT]
+                    converter.target_spec.supported_types = []
+                    converter.target_spec.supported_ops = [
+                        tf.lite.OpsSet.TFLITE_BUILTINS_INT8,
+                        tf.lite.OpsSet.SELECT_TF_OPS,
+                    ]
+                    converter._experimental_disable_per_channel = disable_per_channel
+                    converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
+                    converter.representative_dataset = lambda: representative_dataset_gen(quant_calib_data_path, quant_calib_data_num)
+                    tflite_model = converter.convert()
+                    with open(f'{output_folder_path}/{output_file_name}_integer_quant.tflite', 'wb') as w:
+                        w.write(tflite_model)
+                    if output_weights:
+                        weights_export(
+                            extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_integer_quant.tflite',
+                            output_weights_file_path=f'{output_folder_path}/{output_file_name}_integer_quant_weights.h5',
+                        )
+                    if not non_verbose:
+                        print(f'{Color.GREEN}INT8 Quantization tflite output complete!{Color.RESET}')
 
                 # Full Integer Quantization
                 converter.optimizations = [tf.lite.Optimize.DEFAULT]
@@ -918,59 +919,60 @@ def convert(
                         'Full INT8 Quantization tflite output failed.'
                     )
 
-            # Integer quantization with int16 activations
-            try:
-                converter.optimizations = [tf.lite.Optimize.DEFAULT]
-                converter.target_spec.supported_types = []
-                converter.target_spec.supported_ops = [
-                    tf.lite.OpsSet.EXPERIMENTAL_TFLITE_BUILTINS_ACTIVATIONS_INT16_WEIGHTS_INT8,
-                    tf.lite.OpsSet.SELECT_TF_OPS,
-                ]
-                converter._experimental_disable_per_channel = disable_per_channel
-                converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
-                converter.representative_dataset = lambda: representative_dataset_gen(quant_calib_data_path, quant_calib_data_num)
-                converter.inference_input_type = tf.float32
-                converter.inference_output_type = tf.float32
-                tflite_model = converter.convert()
-                with open(f'{output_folder_path}/{output_file_name}_integer_quant_with_int16_act.tflite', 'wb') as w:
-                    w.write(tflite_model)
-                if not non_verbose:
-                    print(f'{Color.GREEN}INT8 Quantization with int16 activations tflite output complete!{Color.RESET}')
-            except RuntimeError as ex:
-                if not non_verbose:
-                    import traceback
-                    traceback.print_exc()
-                    print(
-                        f'{Color.YELLOW}WARNING:{Color.RESET} '+
-                        'INT8 Quantization with int16 activations tflite output failed.'
-                    )
+            if False:
+                # Integer quantization with int16 activations
+                try:
+                    converter.optimizations = [tf.lite.Optimize.DEFAULT]
+                    converter.target_spec.supported_types = []
+                    converter.target_spec.supported_ops = [
+                        tf.lite.OpsSet.EXPERIMENTAL_TFLITE_BUILTINS_ACTIVATIONS_INT16_WEIGHTS_INT8,
+                        tf.lite.OpsSet.SELECT_TF_OPS,
+                    ]
+                    converter._experimental_disable_per_channel = disable_per_channel
+                    converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
+                    converter.representative_dataset = lambda: representative_dataset_gen(quant_calib_data_path, quant_calib_data_num)
+                    converter.inference_input_type = tf.float32
+                    converter.inference_output_type = tf.float32
+                    tflite_model = converter.convert()
+                    with open(f'{output_folder_path}/{output_file_name}_integer_quant_with_int16_act.tflite', 'wb') as w:
+                        w.write(tflite_model)
+                    if not non_verbose:
+                        print(f'{Color.GREEN}INT8 Quantization with int16 activations tflite output complete!{Color.RESET}')
+                except RuntimeError as ex:
+                    if not non_verbose:
+                        import traceback
+                        traceback.print_exc()
+                        print(
+                            f'{Color.YELLOW}WARNING:{Color.RESET} '+
+                            'INT8 Quantization with int16 activations tflite output failed.'
+                        )
 
-            # Full Integer quantization with int16 activations
-            try:
-                converter.optimizations = [tf.lite.Optimize.DEFAULT]
-                converter.target_spec.supported_types = []
-                converter.target_spec.supported_ops = [
-                    tf.lite.OpsSet.EXPERIMENTAL_TFLITE_BUILTINS_ACTIVATIONS_INT16_WEIGHTS_INT8,
-                    tf.lite.OpsSet.SELECT_TF_OPS,
-                ]
-                converter._experimental_disable_per_channel = disable_per_channel
-                converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
-                converter.representative_dataset = lambda: representative_dataset_gen(quant_calib_data_path, quant_calib_data_num)
-                converter.inference_input_type = tf.int16
-                converter.inference_output_type = tf.int16
-                tflite_model = converter.convert()
-                with open(f'{output_folder_path}/{output_file_name}_full_integer_quant_with_int16_act.tflite', 'wb') as w:
-                    w.write(tflite_model)
-                if not non_verbose:
-                    print(f'{Color.GREEN}Full INT8 Quantization with int16 activations tflite output complete!{Color.RESET}')
-            except RuntimeError as ex:
-                if not non_verbose:
-                    import traceback
-                    traceback.print_exc()
-                    print(
-                        f'{Color.YELLOW}WARNING:{Color.RESET} '+
-                        'Full INT8 Quantization with int16 activations tflite output failed.'
-                    )
+                # Full Integer quantization with int16 activations
+                try:
+                    converter.optimizations = [tf.lite.Optimize.DEFAULT]
+                    converter.target_spec.supported_types = []
+                    converter.target_spec.supported_ops = [
+                        tf.lite.OpsSet.EXPERIMENTAL_TFLITE_BUILTINS_ACTIVATIONS_INT16_WEIGHTS_INT8,
+                        tf.lite.OpsSet.SELECT_TF_OPS,
+                    ]
+                    converter._experimental_disable_per_channel = disable_per_channel
+                    converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
+                    converter.representative_dataset = lambda: representative_dataset_gen(quant_calib_data_path, quant_calib_data_num)
+                    converter.inference_input_type = tf.int16
+                    converter.inference_output_type = tf.int16
+                    tflite_model = converter.convert()
+                    with open(f'{output_folder_path}/{output_file_name}_full_integer_quant_with_int16_act.tflite', 'wb') as w:
+                        w.write(tflite_model)
+                    if not non_verbose:
+                        print(f'{Color.GREEN}Full INT8 Quantization with int16 activations tflite output complete!{Color.RESET}')
+                except RuntimeError as ex:
+                    if not non_verbose:
+                        import traceback
+                        traceback.print_exc()
+                        print(
+                            f'{Color.YELLOW}WARNING:{Color.RESET} '+
+                            'Full INT8 Quantization with int16 activations tflite output failed.'
+                        )
 
         # Returns true if the two arrays, the output of onnx and the output of TF,
         # are elementwise equal within an acceptable range.
