@@ -48,6 +48,8 @@ from onnx2tf.utils.common_functions import (
     onnx_tf_tensor_validation,
     weights_export,
     download_test_image_data,
+    get_tf_model_inputs,
+    get_tf_model_outputs,
 )
 from onnx2tf.utils.colors import Color
 from sng4onnx import generate as op_name_auto_generate
@@ -555,7 +557,7 @@ def convert(
             output_op_name \
                 for output_op_name in output_names_to_interrupt_model_conversion
         ]
-        onnx_graph = extraction(
+        onnx_graph: onnx.ModelProto = extraction(
             input_op_names=[graph_input.name for graph_input in graph.inputs],
             output_op_names=output_names,
             onnx_graph=onnx_graph,
@@ -563,6 +565,44 @@ def convert(
         # Re-import of onnx_graph
         del graph
         graph = gs.import_onnx(onnx_graph)
+
+    # ONNX dummy inference
+    # Generate output for all OPs.
+    # Used to verify the output error of each OP in the TensorFlow model.
+    full_ops_output_names = []
+    onnx_tensor_infos_for_validation = None
+    for graph_node in graph.nodes:
+        full_ops_output_names_sub = []
+        for graph_node_output in graph_node.outputs:
+            full_ops_output_names_sub.append(graph_node_output.name)
+        full_ops_output_names.extend(full_ops_output_names_sub)
+    # Models with errors during inference in onnxruntime skip dummy inference.
+    try:
+        onnx_outputs_for_validation: List[np.ndarray] = dummy_onnx_inference(
+            onnx_graph=onnx_graph,
+            output_names=full_ops_output_names,
+        )
+        """
+        onnx_tensor_infos_for_validation:
+            {
+                onnx_output_name: np.ndarray,
+                onnx_output_name: np.ndarray,
+                onnx_output_name: np.ndarray,
+                            :
+            }
+        """
+        onnx_tensor_infos_for_validation = {
+            ops_output_name: onnx_output_for_validation \
+                for ops_output_name, onnx_output_for_validation \
+                    in zip(full_ops_output_names, onnx_outputs_for_validation)
+        }
+    except Exception as ex:
+        print(
+            f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
+            f'The optimization process for shape estimation is skipped ' +
+            f'because it contains OPs that cannot be inferred by the standard onnxruntime.'
+        )
+        print(f'{Color.YELLOW}WARNING:{Color.RESET} {ex}')
 
     if not non_verbose:
         print('')
@@ -599,6 +639,7 @@ def convert(
         'replacement_parameters': replacement_parameters,
         'mvn_epsilon': mvn_epsilon,
         'output_signaturedefs': output_signaturedefs,
+        'onnx_tensor_infos_for_validation': onnx_tensor_infos_for_validation,
     }
 
     tf_layers_dict = {}
@@ -676,16 +717,13 @@ def convert(
             )
 
         # List "optype"="Input"
-        inputs = [
-            layer_info['op'] \
-                for layer_info in tf_layers_dict.values() \
-                    if layer_info['optype'] == 'Input'
-        ]
-        outputs = [
-            layer_info['tf_node'] \
-                for opname, layer_info in tf_layers_dict.items() \
-                    if opname in output_names
-        ]
+        inputs = get_tf_model_inputs(
+            tf_layers_dict=tf_layers_dict,
+        )
+        outputs = get_tf_model_outputs(
+            tf_layers_dict=tf_layers_dict,
+            output_names=output_names,
+        )
 
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
         if not non_verbose:
@@ -1015,13 +1053,9 @@ def convert(
             # ]
 
             # Output OP extended to all ONNX nodes
+            ops_output_names = []
             if check_onnx_tf_outputs_elementwise_close_full:
-                ops_output_names = []
-                for graph_node in graph.nodes:
-                    ops_output_names_sub = []
-                    for graph_node_output in graph_node.outputs:
-                        ops_output_names_sub.append(graph_node_output.name)
-                    ops_output_names.extend(ops_output_names_sub)
+                ops_output_names = full_ops_output_names
             else:
                 ops_output_names = output_names
 
@@ -1073,76 +1107,88 @@ def convert(
                 elif check_onnx_tf_outputs_sample_data_normalization == "denorm":
                     test_data_nhwc = test_data_nhwc * 255.0
 
-            # ONNX dummy inference
-            dummy_onnx_outputs: List[np.ndarray] = dummy_onnx_inference(
-                onnx_graph=onnx_graph,
-                output_names=ops_output_names,
-                test_data_nhwc=test_data_nhwc,
-            )
-            # TF dummy inference
-            tf_tensor_infos: Dict[Any] = dummy_tf_inference(
-                model=model,
-                inputs=inputs,
-                test_data_nhwc=test_data_nhwc,
-            )
-            # Validation
-            onnx_tensor_infos = {
-                output_name: dummy_onnx_output \
-                    for output_name, dummy_onnx_output in zip(ops_output_names, dummy_onnx_outputs)
-            }
-            """
-            np.allclose(
-                dummy_onnx_outputs,
-                dummy_tf_outputs,
-                rtol=0.0,
-                atol=1e-04,
-                equal_nan=True,
-            )
-
-            check_results: Dict[str, List[np.ndarray, bool]]
-                {
-                    onnx_output_name: [
-                        onnx_tensor,
-                        matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched)
-                        max_abs_err,
-                    ]
-                }
-            """
-            input_names = [k.name for k in inputs]
-            onnx_tf_output_pairs = {(k, v['tf_node'].name): (onnx_tensor_infos[k], tf_tensor_infos[v['tf_node'].name])
-                                    for k, v in tf_layers_dict.items() if k not in input_names}
-
-            check_results = onnx_tf_tensor_validation(
-                output_pairs=onnx_tf_output_pairs,
-                rtol=check_onnx_tf_outputs_elementwise_close_rtol,
-                atol=check_onnx_tf_outputs_elementwise_close_atol,
-            )
-            for (onnx_output_name, tf_output_name), checked_value in check_results.items():
-                validated_onnx_tensor: np.ndarray = checked_value[0]
-                matched_flg: int = checked_value[1]
-                max_abs_err: Any = checked_value[2]
-                message = ''
-                if matched_flg == 0:
-                    message = \
-                        f'{Color.GREEN}validate_result{Color.RESET}: ' +\
-                        f'{Color.REVERCE}{Color.YELLOW} Unmatched {Color.RESET} ' +\
-                        f'{Color.GREEN}max_abs_error{Color.RESET}: {max_abs_err}'
-                elif matched_flg == 1:
-                    message = \
-                        f'{Color.GREEN}validate_result{Color.RESET}: ' +\
-                        f'{Color.REVERCE}{Color.GREEN} Matches {Color.RESET}'
-                elif matched_flg == 2:
-                    message = \
-                        f'{Color.GREEN}validate_result{Color.RESET}: ' +\
-                        f'{Color.REVERCE}{Color.BLUE} Skipped (Deleted or Shape Unmatched) {Color.RESET}'
-                print(
-                    f'{Color.GREEN}INFO:{Color.RESET} '+
-                    f'{Color.GREEN}onnx_output_name{Color.RESET}: {onnx_output_name} '+
-                    f'{Color.GREEN}tf_output_name{Color.RESET}: {tf_output_name} '+
-                    f'{Color.GREEN}shape{Color.RESET}: {validated_onnx_tensor.shape} '+
-                    f'{Color.GREEN}dtype{Color.RESET}: {validated_onnx_tensor.dtype} '+
-                    f'{message}'
+            dummy_onnx_outputs = None
+            try:
+                # ONNX dummy inference
+                dummy_onnx_outputs: List[np.ndarray] = dummy_onnx_inference(
+                    onnx_graph=onnx_graph,
+                    output_names=ops_output_names,
+                    test_data_nhwc=test_data_nhwc,
                 )
+            except Exception as ex:
+                print(
+                    f'{Color.YELLOW}WARNING:{Color.RESET} ' +\
+                    f'The accuracy error measurement process was skipped ' +
+                    f'because the standard onnxruntime contains OPs that cannot be inferred.'
+                )
+                print(f'{Color.YELLOW}WARNING:{Color.RESET} {ex}')
+            else:
+                # TF dummy inference
+                tf_tensor_infos: Dict[Any] = dummy_tf_inference(
+                    model=model,
+                    inputs=inputs,
+                    test_data_nhwc=test_data_nhwc,
+                )
+                # Validation
+                onnx_tensor_infos = {
+                    output_name: dummy_onnx_output \
+                        for output_name, dummy_onnx_output in zip(ops_output_names, dummy_onnx_outputs)
+                }
+                """
+                np.allclose(
+                    dummy_onnx_outputs,
+                    dummy_tf_outputs,
+                    rtol=0.0,
+                    atol=1e-04,
+                    equal_nan=True,
+                )
+
+                check_results: Dict[str, List[np.ndarray, int, float|int]]
+                    {
+                        onnx_output_name: [
+                            onnx_tensor,
+                            matched_flg, <--- 0: Unmatched, 1: Matched, 2: Skipped (Deleted or Shape Unmatched)
+                            max_abs_err,
+                        ]
+                    }
+                """
+                input_names = [k.name for k in inputs]
+                onnx_tf_output_pairs = {
+                    (k, v['tf_node'].name): (onnx_tensor_infos[k], tf_tensor_infos[v['tf_node'].name])
+                        for k, v in tf_layers_dict.items() if k not in input_names and not hasattr(v['tf_node'], 'numpy')
+                }
+
+                check_results = onnx_tf_tensor_validation(
+                    output_pairs=onnx_tf_output_pairs,
+                    rtol=check_onnx_tf_outputs_elementwise_close_rtol,
+                    atol=check_onnx_tf_outputs_elementwise_close_atol,
+                )
+                for (onnx_output_name, tf_output_name), checked_value in check_results.items():
+                    validated_onnx_tensor: np.ndarray = checked_value[0]
+                    matched_flg: int = checked_value[1]
+                    max_abs_err: Any = checked_value[2]
+                    message = ''
+                    if matched_flg == 0:
+                        message = \
+                            f'{Color.GREEN}validate_result{Color.RESET}: ' +\
+                            f'{Color.REVERCE}{Color.YELLOW} Unmatched {Color.RESET} ' +\
+                            f'{Color.GREEN}max_abs_error{Color.RESET}: {max_abs_err}'
+                    elif matched_flg == 1:
+                        message = \
+                            f'{Color.GREEN}validate_result{Color.RESET}: ' +\
+                            f'{Color.REVERCE}{Color.GREEN} Matches {Color.RESET}'
+                    elif matched_flg == 2:
+                        message = \
+                            f'{Color.GREEN}validate_result{Color.RESET}: ' +\
+                            f'{Color.REVERCE}{Color.BLUE} Skipped (Deleted or Shape Unmatched) {Color.RESET}'
+                    print(
+                        f'{Color.GREEN}INFO:{Color.RESET} '+
+                        f'{Color.GREEN}onnx_output_name{Color.RESET}: {onnx_output_name} '+
+                        f'{Color.GREEN}tf_output_name{Color.RESET}: {tf_output_name} '+
+                        f'{Color.GREEN}shape{Color.RESET}: {validated_onnx_tensor.shape} '+
+                        f'{Color.GREEN}dtype{Color.RESET}: {validated_onnx_tensor.dtype} '+
+                        f'{message}'
+                    )
 
         return model
 

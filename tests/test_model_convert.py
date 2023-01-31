@@ -10,6 +10,7 @@ warnings.simplefilter(action='ignore', category=DeprecationWarning)
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=RuntimeWarning)
 
+import glob
 import platform
 import shutil
 import sys
@@ -113,6 +114,9 @@ def _report_convert_model(file_path):
             output_folder_path=_CFG['output_directory'],
             non_verbose=True,
         )
+        os.remove(file_path)
+        for tflitepath in glob.glob(f"{_CFG['output_directory']}/*.tflite"):
+            os.remove(tflitepath)
         return ''
     except Exception as ex:
         _del_location(_CFG['untar_directory'])
@@ -145,6 +149,7 @@ def _report_model(file_path, results=Results(), onnx_model_count=1):
         ir_version = model.ir_version
         opset_version = model.opset_import[0].version
         check_err = _report_check_model(model)
+        del model
         convert_err = '' if check_err else _report_convert_model(file_path)
 
         if not check_err and not convert_err:
