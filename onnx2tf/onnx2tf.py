@@ -66,6 +66,8 @@ def convert(
     quant_type: Optional[str] = 'per-channel',
     quant_calib_data_path: Optional[str] = None,
     quant_calib_data_num: Optional[int] = 500,
+    quant_calib_data_input_scaler: Optional[float] = 255.0,
+    quant_calib_data_swap_rb_channels: Optional[int] = 1,
     input_output_quant_dtype: Optional[str] = 'int8',
     not_use_onnxsim: Optional[bool] = False,
     not_use_opname_auto_generate: Optional[bool] = False,
@@ -145,6 +147,12 @@ def convert(
 
     quant_calib_data_num: Optional[int]
         Number of calibration data file for quantization
+
+    quant_calib_data_input_scaler: Optional[float]
+        input_scaler for pre-processing input images
+
+    quant_calib_data_swap_rb_channels: Optional[int]
+        swap_rb_channels for pre-processing input images
 
     input_output_quant_dtype: Optional[str]
         Input and Output dtypes when doing Full INT8 Quantization.\n
@@ -891,8 +899,9 @@ def convert(
                     img = cv2.imread(image_path)
                     for model_input in model.inputs:
                         img = cv2.resize(img, (model_input.shape[2], model_input.shape[1]))
-                        img = img[..., ::-1]  # BGR->RGB
-                        img = img[np.newaxis, ...].astype(np.float32) / 1.0
+                        if quant_calib_data_swap_rb_channels:
+                            img = img[..., ::-1]  # BGR->RGB
+                        img = img[np.newaxis, ...].astype(np.float32) / quant_calib_data_input_scaler
                         calib_data_list.append(img)
                     yield calib_data_list
 
@@ -1272,6 +1281,20 @@ def main():
             'Number of calibration data file for quantization.'
     )
     parser.add_argument(
+        '--quant_calib_data_input_scaler',
+        type=float,
+        default=255.0,
+        help=\
+            'input_scaler for pre-processing input images'
+    )
+    parser.add_argument(
+        '--quant_calib_data_swap_rb_channels',
+        type=int,
+        default=1,
+        help=\
+            'swap_rb_channels for pre-processing input images'
+    )
+    parser.add_argument(
         '-ioqd',
         '--input_output_quant_dtype',
         type=str,
@@ -1647,6 +1670,8 @@ def main():
         quant_type=args.quant_type,
         quant_calib_data_path=args.quant_calib_data_path,
         quant_calib_data_num=args.quant_calib_data_num,
+        quant_calib_data_input_scaler = args.quant_calib_data_input_scaler,
+        quant_calib_data_swap_rb_channels = args.quant_calib_data_swap_rb_channels,
         input_output_quant_dtype=args.input_output_quant_dtype,
         not_use_onnxsim=args.not_use_onnxsim,
         not_use_opname_auto_generate=args.not_use_opname_auto_generate,
