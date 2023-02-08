@@ -34,6 +34,7 @@ class NMSLayer(tf.keras.layers.Layer):
         max_output_size,
         iou_threshold=0.5,
         score_threshold=float('-inf'),
+        pad_to_max_output_size=False,
         name=None,
     ):
         with ops.name_scope(name, 'non_max_suppression'):
@@ -58,9 +59,13 @@ class NMSLayer(tf.keras.layers.Layer):
                             value=score_threshold,
                             name='score_threshold',
                         ),
-                pad_to_max_output_size=False,
+                pad_to_max_output_size=pad_to_max_output_size,
             )
-            return selected_indices[:num_valid]
+            if pad_to_max_output_size:
+                return selected_indices
+
+            else:
+                return selected_indices[:num_valid]
 
     def call(
         self,
@@ -69,6 +74,7 @@ class NMSLayer(tf.keras.layers.Layer):
         max_output_size,
         iou_threshold=0.5,
         score_threshold=float('-inf'),
+        pad_to_max_output_size=False,
         name=None,
     ):
         return self.non_max_suppression(
@@ -77,6 +83,7 @@ class NMSLayer(tf.keras.layers.Layer):
             max_output_size,
             iou_threshold,
             score_threshold,
+            pad_to_max_output_size,
             name,
         )
 
@@ -120,6 +127,9 @@ def make_node(
         if isinstance(graph_node_input_1, gs.Variable) else graph_node_input_1
     scores = tf_layers_dict[graph_node_input_2.name]['tf_node'] \
         if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+
+    output_nms_with_dynamic_tensor: bool = \
+        kwargs['output_nms_with_dynamic_tensor']
 
     # Pre-process transpose
     boxes = pre_process_transpose(
@@ -269,14 +279,56 @@ def make_node(
 
     for batch_i in tf.range(num_batches):
         # get boxes in batch_i only
-        tf_boxes = tf.squeeze(tf.gather(boxes, [batch_i]), axis=0)
+        begin_ = [0 if idx != 0 else batch_i for idx in range(len(boxes.shape))]
+        end_ = [0 if idx != 0 else batch_i + 1 for idx in range(len(boxes.shape))]
+        begin_mask_ = sum([2**idx if idx != 0 else 0 for idx in range(len(boxes.shape))])
+        end_mask_ = begin_mask_
+        tf_boxes = \
+            tf.squeeze(
+                input=tf.strided_slice(
+                    input_=boxes,
+                    begin=begin_,
+                    end=end_,
+                    begin_mask=begin_mask_,
+                    end_mask=end_mask_,
+                ),
+                axis=0,
+            )
         # get scores of all classes in batch_i only
-        batch_i_scores = tf.squeeze(tf.gather(scores, [batch_i]), axis=0)
+        begin_ = [0 if idx != 0 else batch_i for idx in range(len(scores.shape))]
+        end_ = [0 if idx != 0 else batch_i + 1 for idx in range(len(scores.shape))]
+        begin_mask_ = sum([2**idx if idx != 0 else 0 for idx in range(len(scores.shape))])
+        end_mask_ = begin_mask_
+        batch_i_scores = \
+            tf.squeeze(
+                input=tf.strided_slice(
+                    input_=scores,
+                    begin=begin_,
+                    end=end_,
+                    begin_mask=begin_mask_,
+                    end_mask=end_mask_,
+                ),
+                axis=0,
+            )
         # get number of classess in batch_i only
         num_classes = batch_i_scores.shape[0]
         for class_j in tf.range(num_classes):
             # get scores in class_j for batch_i only
-            tf_scores = tf.squeeze(tf.gather(batch_i_scores, [class_j]), axis=0)
+            begin_ = [0 if idx != 0 else class_j for idx in range(len(batch_i_scores.shape))]
+            end_ = [0 if idx != 0 else class_j + 1 for idx in range(len(batch_i_scores.shape))]
+            begin_mask_ = sum([2**idx if idx != 0 else 0 for idx in range(len(batch_i_scores.shape))])
+            end_mask_ = begin_mask_
+            tf_scores = \
+                tf.squeeze(
+                    input=tf.strided_slice(
+                        input_=batch_i_scores,
+                        begin=begin_,
+                        end=end_,
+                        begin_mask=begin_mask_,
+                        end_mask=end_mask_,
+                    ),
+                    axis=0,
+                )
             # get the selected boxes indices
             nms = NMSLayer()
             selected_indices = nms(
@@ -285,6 +337,7 @@ def make_node(
                 max_output_size=max_output_boxes_per_class,
                 iou_threshold=iou_threshold,
                 score_threshold=score_threshold,
+                pad_to_max_output_size=not output_nms_with_dynamic_tensor,
             )
 
             # add batch and class information into the indices

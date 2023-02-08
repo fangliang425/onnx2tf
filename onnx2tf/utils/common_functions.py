@@ -328,6 +328,11 @@ def print_node_info(func):
                 f'If the input OP of ONNX before conversion is NHWC or ' +
                 f'an irregular channel arrangement other than NCHW, use the -kt or -kat option.'
             )
+            print(
+                f'{Color.RED}ERROR:{Color.RESET} ' +
+                f'Also, for models that include NonMaxSuppression in the post-processing, ' +
+                f'try the -onwdt option.'
+            )
             sys.exit(1)
     return print_wrapper_func
 
@@ -1478,6 +1483,93 @@ def alternative_acos(
         y
     )
     return pseudo_acos
+
+
+# https://developer.download.nvidia.com/cg/atan2.html
+def alternative_atan2(
+    *,
+    input_tensor_y,
+    input_tensor_x,
+) -> Any:
+    """Replace Atan2 with a pseudo_Atan2.
+
+    Parameters
+    ----------
+    input_tensor_y: Tensor
+        Tensor to be processed.
+        Vector or scalar for numerator of ratio of which to determine the arctangent.
+
+    input_tensor_x: Tensor
+        Tensor to be processed.
+        Vector or scalar of denominator of ratio of which to determine the arctangent.
+
+    Returns
+    ----------
+    pseudo_atan2: Tensor
+        Converted Atan2
+    """
+    abs_x = tf.math.abs(input_tensor_x)
+    abs_y = tf.math.abs(input_tensor_y)
+    t3 = tf.math.abs(input_tensor_x)
+    t1 = tf.math.abs(input_tensor_y)
+    t0 = tf.maximum(t3, t1)
+    t1 = tf.minimum(t3, t1)
+    t3 = 1.0 / t0
+    t3 = t1 * t3
+    t4 = t3 * t3
+    t0 = -0.013480470
+    t0 = t0 * t4 + 0.057477314
+    t0 = t0 * t4 - 0.121239071
+    t0 = t0 * t4 + 0.195635925
+    t0 = t0 * t4 - 0.332994597
+    t0 = t0 * t4 + 0.999995630
+    t3 = t0 * t3
+    t3 = tf.where(
+        condition=tf.math.greater(abs_y, abs_x),
+        x=1.570796327 - t3,
+        y=t3,
+    )
+    t3 = tf.where(
+        condition=tf.math.less(input_tensor_x, 0),
+        x=3.141592654 - t3,
+        y=t3,
+    )
+    pseudo_atan2 = tf.where(
+        condition=tf.math.less(input_tensor_y, 0),
+        x=-t3,
+        y=t3,
+    )
+    # TODO: Switch to standard OP with TF v2.12.0 or later
+    # Skip TF v2.11.0 as it is heavily broken
+    # pseudo_atan2 = tf.math.atan2(
+    #     y=input_tensor_y,
+    #     x=input_tensor_x,
+    # )
+    return pseudo_atan2
+
+
+# https://developer.download.nvidia.com/cg/atan.html
+def alternative_atan(
+    *,
+    input_tensor,
+) -> Any:
+    """Replace Atan with a pseudo_Atan.
+
+    Parameters
+    ----------
+    input_tensor_x: Tensor
+        Tensor to be processed.
+        Vector or scalar of which to determine the arctangent.
+
+    Returns
+    ----------
+    pseudo_atan: Tensor
+        Converted Atan
+    """
+    return alternative_atan2(
+        input_tensor_y=input_tensor,
+        input_tensor_x=1.0,
+    )
 
 
 # https://github.com/onnx/onnx-tensorflow/blob/main/onnx_tf/common/pooling_helper.py
@@ -2844,7 +2936,9 @@ def dummy_tf_inference(
     if not isinstance(outputs, list):
         outputs = [outputs]
 
-    tf_output_dict = {tensor.name: output.numpy() for tensor, output in zip(model.outputs, outputs)}
+    tf_output_dict = {
+        tensor.name: output.numpy() for tensor, output in zip(model.outputs, outputs)
+    }
 
     return tf_output_dict
 
@@ -3024,8 +3118,7 @@ def download_test_image_data() -> np.ndarray:
     """
     DATA_COUNT = 20
     FILE_NAME = f'calibration_image_sample_data_{DATA_COUNT}x128x128x3_float32.npy'
-    DOWNLOAD_VER = '1.0.49'
-    URL = f'https://github.com/PINTO0309/onnx2tf/releases/download/{DOWNLOAD_VER}/{FILE_NAME}'
+    URL = f'https://s3.us-central-1.wasabisys.com/onnx2tf-en/datas/{FILE_NAME}'
     test_sample_images_npy = requests.get(URL).content
     test_image_data = None
     with io.BytesIO(test_sample_images_npy) as f:

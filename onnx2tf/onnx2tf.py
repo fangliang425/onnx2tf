@@ -18,7 +18,6 @@ import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=Warning)
 warnings.simplefilter(action='ignore', category=DeprecationWarning)
-warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter(action='ignore', category=RuntimeWarning)
 import subprocess
 import random
@@ -73,6 +72,8 @@ def convert(
     not_use_opname_auto_generate: Optional[bool] = False,
     batch_size: Optional[int] = None,
     overwrite_input_shape: Optional[List[str]] = None,
+    no_large_tensor: Optional[bool] = False,
+    output_nms_with_dynamic_tensor: Optional[bool] = False,
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]] = None,
     keep_nwc_or_nhwc_or_ndhwc_input_names: Optional[List[str]] = None,
     keep_shape_absolutely_input_names: Optional[List[str]] = None,
@@ -87,16 +88,7 @@ def convert(
     replace_argmax_to_fused_argmax_and_indicies_is_int64: Optional[bool] = False,
     replace_argmax_to_fused_argmax_and_indicies_is_float32: Optional[bool] = False,
     fused_argmax_scale_ratio: Optional[float] = 0.5,
-    replace_asin_to_pseudo_asin: Optional[bool] = False,
-    replace_acos_to_pseudo_acos: Optional[bool] = False,
-    replace_abs_to_pseudo_abs: Optional[bool] = False,
-    replace_prelu_to_pseudo_prelu: Optional[bool] = False,
-    replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool] = False,
-    replace_power_to_pseudo_power: Optional[bool] = False,
-    replace_gathernd_to_pseudo_gathernd: Optional[bool] = False,
-    replace_neg_to_pseudo_neg: Optional[bool] = False,
-    replace_hardswish_to_pseudo_hardswish: Optional[bool] = False,
-    replace_erf_to_pseudo_erf: Optional[bool] = False,
+    replace_to_pseudo_operators: List[str] = None,
     param_replacement_file: Optional[str] = '',
     check_gpu_delegate_compatibility: Optional[bool] = False,
     check_onnx_tf_outputs_elementwise_close: Optional[bool] = False,
@@ -181,6 +173,22 @@ def convert(
         A value of 1 or more must be specified.\n
         Numerical values other than dynamic dimensions are ignored.\n
         Ignores batch_size if specified at the same time as batch_size.
+
+    no_large_tensor: Optional[bool]
+        Suppresses constant bloat caused by Tile OP when optimizing models in onnxsim.\n
+        See: https://github.com/daquexian/onnx-simplifier/issues/178
+
+    output_nms_with_dynamic_tensor: Optional[bool]
+        The number of bounding boxes in the NMS output results is\n
+        not fixed at the maximum number of max_output_boxes_per_class,\n
+        but rather at the smallest possible number of dynamic tensors.\n
+        If this option is disabled, NMS output is padded to the number\n
+        set in the max_output_boxes_per_class attribute.\n
+        e.g.\n
+        disable --output_nms_with_dynamic_tensor:\n
+            output_tensor_shape: [100, 7]\n
+        enable --output_nms_with_dynamic_tensor:\n
+            output_tensor_shape: [N, 7]
 
     keep_ncw_or_nchw_or_ncdhw_input_names: Optional[List[str]]
         Holds the NCW or NCHW or NCDHW of the input shape for the specified INPUT OP names.\n
@@ -273,35 +281,11 @@ def convert(
         0.0 < fused_argmax_scale_ratio <= 1.0\n
         Default: 0.5
 
-    replace_asin_to_pseudo_asin: Optional[bool]
-        Replace Asin with a pseudo Asin.
-
-    replace_acos_to_pseudo_acos: Optional[bool]
-        Replace Acos with a pseudo Acos.
-
-    replace_abs_to_pseudo_abs: Optional[bool]
-        Replace Abs with a pseudo Abs.
-
-    replace_prelu_to_pseudo_prelu: Optional[bool]
-        Replace PReLU with a pseudo PReLU.
-
-    replace_leakyrelu_to_pseudo_leakyrelu: Optional[bool]
-        Replace LeakyReLU with a pseudo LeakyReLU.
-
-    replace_power_to_pseudo_power: Optional[bool]
-        Replace Power with a pseudo Power.
-
-    replace_gathernd_to_pseudo_gathernd: Optional[bool]
-        Replace GatherND with a pseudo GatherND.
-
-    replace_neg_to_pseudo_neg: Optional[bool]
-        Replace Neg with a pseudo Neg.
-
-    replace_hardswish_to_pseudo_hardswish: Optional[bool]
-        Replace HardSwish with a pseudo HardSwish.
-
-    replace_erf_to_pseudo_erf: Optional[bool]
-        Replace Erf with a pseudo Erf.
+    replace_to_pseudo_operators: List[str]
+        Replace list of operators to pseudo operators. \n
+        Full name of the target operators should be given. \n
+        Currently supported operators : \n
+        Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf
 
     mvn_epsilon: Optional[float]
         For MeanVarianceNormalization.\n
@@ -489,6 +473,8 @@ def convert(
             for _ in range(3):
                 append_param = list(['--overwrite-input-shape'] + overwrite_input_shape) \
                     if overwrite_input_shape is not None else []
+                append_param = append_param + ['--no-large-tensor'] \
+                    if no_large_tensor else append_param
                 result = subprocess.check_output(
                     [
                         'onnxsim',
@@ -619,6 +605,9 @@ def convert(
     # Create Output folder
     os.makedirs(output_folder_path, exist_ok=True)
 
+    if replace_to_pseudo_operators is None:
+        replace_to_pseudo_operators = []
+
     # Define additional parameters
     additional_parameters = {
         'onnx_graph': onnx_graph,
@@ -634,20 +623,12 @@ def convert(
         'replace_argmax_to_fused_argmax_and_indicies_is_int64': replace_argmax_to_fused_argmax_and_indicies_is_int64,
         'replace_argmax_to_fused_argmax_and_indicies_is_float32': replace_argmax_to_fused_argmax_and_indicies_is_float32,
         'fused_argmax_scale_ratio': fused_argmax_scale_ratio,
-        'replace_asin_to_pseudo_asin': replace_asin_to_pseudo_asin,
-        'replace_acos_to_pseudo_acos': replace_acos_to_pseudo_acos,
-        'replace_abs_to_pseudo_abs': replace_abs_to_pseudo_abs,
-        'replace_prelu_to_pseudo_prelu': replace_prelu_to_pseudo_prelu,
-        'replace_leakyrelu_to_pseudo_leakyrelu': replace_leakyrelu_to_pseudo_leakyrelu,
-        'replace_power_to_pseudo_power': replace_power_to_pseudo_power,
-        'replace_gathernd_to_pseudo_gathernd': replace_gathernd_to_pseudo_gathernd,
-        'replace_neg_to_pseudo_neg': replace_neg_to_pseudo_neg,
-        'replace_hardswish_to_pseudo_hardswish': replace_hardswish_to_pseudo_hardswish,
-        'replace_erf_to_pseudo_erf': replace_erf_to_pseudo_erf,
+        'replace_to_pseudo_operators': replace_to_pseudo_operators,
         'replacement_parameters': replacement_parameters,
         'mvn_epsilon': mvn_epsilon,
         'output_signaturedefs': output_signaturedefs,
         'onnx_tensor_infos_for_validation': onnx_tensor_infos_for_validation,
+        'output_nms_with_dynamic_tensor': output_nms_with_dynamic_tensor,
     }
 
     tf_layers_dict = {}
@@ -1347,6 +1328,30 @@ def main():
             'Ignores --batch_size if specified at the same time as --batch_size.'
     )
     parser.add_argument(
+        '-nlt',
+        '--no_large_tensor',
+        action='store_true',
+        help=\
+            'Suppresses constant bloat caused by Tile OP when optimizing models in onnxsim. \n' +
+            'See: https://github.com/daquexian/onnx-simplifier/issues/178'
+    )
+    parser.add_argument(
+        '-onwdt',
+        '--output_nms_with_dynamic_tensor',
+        action='store_true',
+        help=\
+            'The number of bounding boxes in the NMS output results is \n' +
+            'not fixed at the maximum number of max_output_boxes_per_class, \n' +
+            'but rather at the smallest possible number of dynamic tensors. \n' +
+            'If this option is disabled, NMS output is padded to the number \n' +
+            'set in the max_output_boxes_per_class attribute. \n' +
+            'e.g. \n' +
+            'disable --output_nms_with_dynamic_tensor: \n' +
+            '    output_tensor_shape: [100, 7] \n' +
+            'enable --output_nms_with_dynamic_tensor: \n' +
+            '    output_tensor_shape: [N, 7]'
+    )
+    parser.add_argument(
         '-k',
         '--keep_ncw_or_nchw_or_ncdhw_input_names',
         type=str,
@@ -1497,64 +1502,15 @@ def main():
             'Default: 0.5'
     )
     parser.add_argument(
-        '-rasin',
-        '--replace_asin_to_pseudo_asin',
-        action='store_true',
-        help='Replace Asin with a pseudo Asin.'
-    )
-    parser.add_argument(
-        '-racos',
-        '--replace_acos_to_pseudo_acos',
-        action='store_true',
-        help='Replace Acos with a pseudo Acos.'
-    )
-    parser.add_argument(
-        '-rabs',
-        '--replace_abs_to_pseudo_abs',
-        action='store_true',
-        help='Replace Abs with a pseudo Abs.'
-    )
-    parser.add_argument(
-        '-rpr',
-        '--replace_prelu_to_pseudo_prelu',
-        action='store_true',
-        help='Replace PReLU with a pseudo PReLU.'
-    )
-    parser.add_argument(
-        '-rlr',
-        '--replace_leakyrelu_to_pseudo_leakyrelu',
-        action='store_true',
-        help='Replace LeakyReLU with a pseudo LeakyReLU.'
-    )
-    parser.add_argument(
-        '-rpw',
-        '--replace_power_to_pseudo_power',
-        action='store_true',
-        help='Replace Power with a pseudo Power.'
-    )
-    parser.add_argument(
-        '-rgn',
-        '--replace_gathernd_to_pseudo_gathernd',
-        action='store_true',
-        help='Replace GatherND with a pseudo GatherND.'
-    )
-    parser.add_argument(
-        '-rng',
-        '--replace_neg_to_pseudo_neg',
-        action='store_true',
-        help='Replace Neg with a pseudo Neg.'
-    )
-    parser.add_argument(
-        '-rhs',
-        '--replace_hardswish_to_pseudo_hardswish',
-        action='store_true',
-        help='Replace HardSwish with a pseudo HardSwish.'
-    )
-    parser.add_argument(
-        '-rerf',
-        '--replace_erf_to_pseudo_erf',
-        action='store_true',
-        help='Replace Erf with a pseudo Erf.'
+        '-rtpo',
+        '--replace_to_pseudo_operators',
+        nargs='*',
+        default=[],
+        help=\
+            'Replace list of operators to pseudo operators. \n ' +
+            'Full name of the target operators should be given. \n ' +
+            'Currently supported operators : \n' +
+            'Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf'
     )
     parser.add_argument(
         '-me',
@@ -1660,6 +1616,29 @@ def main():
         print(__version__)
         sys.exit(0)
 
+    # convert quant_calib_input_op_name_np_data_path
+    # [
+    #   [{input_op_name} {numpy_file_path} {mean} {std}],
+    #   [{input_op_name} {numpy_file_path} {mean} {std}],
+    #   [{input_op_name} {numpy_file_path} {mean} {std}],
+    # ]
+    calib_params = []
+    if args.quant_calib_input_op_name_np_data_path is not None:
+        for param in args.quant_calib_input_op_name_np_data_path:
+            input_op_name = str(param[0])
+            numpy_file_path = str(param[1])
+            mean = np.asarray(ast.literal_eval(param[2]), dtype=np.float32)
+            std = np.asarray(ast.literal_eval(param[3]), dtype=np.float32)
+            calib_params.append(
+                [input_op_name, numpy_file_path, mean, std]
+            )
+    if len(calib_params) == 0:
+        calib_params = None
+
+    args.replace_to_pseudo_operators = [
+        name.lower() for name in args.replace_to_pseudo_operators
+    ]
+
     # Convert
     model = convert(
         input_onnx_file_path=args.input_onnx_file_path,
@@ -1678,6 +1657,8 @@ def main():
         not_use_opname_auto_generate=args.not_use_opname_auto_generate,
         batch_size=args.batch_size,
         overwrite_input_shape=args.overwrite_input_shape,
+        no_large_tensor=args.no_large_tensor,
+        output_nms_with_dynamic_tensor=args.output_nms_with_dynamic_tensor,
         keep_ncw_or_nchw_or_ncdhw_input_names=args.keep_ncw_or_nchw_or_ncdhw_input_names,
         keep_nwc_or_nhwc_or_ndhwc_input_names=args.keep_nwc_or_nhwc_or_ndhwc_input_names,
         keep_shape_absolutely_input_names=args.keep_shape_absolutely_input_names,
@@ -1692,16 +1673,7 @@ def main():
         replace_argmax_to_fused_argmax_and_indicies_is_int64=args.replace_argmax_to_fused_argmax_and_indicies_is_int64,
         replace_argmax_to_fused_argmax_and_indicies_is_float32=args.replace_argmax_to_fused_argmax_and_indicies_is_float32,
         fused_argmax_scale_ratio=args.fused_argmax_scale_ratio,
-        replace_asin_to_pseudo_asin=args.replace_asin_to_pseudo_asin,
-        replace_acos_to_pseudo_acos=args.replace_acos_to_pseudo_acos,
-        replace_abs_to_pseudo_abs=args.replace_abs_to_pseudo_abs,
-        replace_prelu_to_pseudo_prelu=args.replace_prelu_to_pseudo_prelu,
-        replace_leakyrelu_to_pseudo_leakyrelu=args.replace_leakyrelu_to_pseudo_leakyrelu,
-        replace_power_to_pseudo_power=args.replace_power_to_pseudo_power,
-        replace_gathernd_to_pseudo_gathernd=args.replace_gathernd_to_pseudo_gathernd,
-        replace_neg_to_pseudo_neg=args.replace_neg_to_pseudo_neg,
-        replace_hardswish_to_pseudo_hardswish=args.replace_hardswish_to_pseudo_hardswish,
-        replace_erf_to_pseudo_erf=args.replace_erf_to_pseudo_erf,
+        replace_to_pseudo_operators=args.replace_to_pseudo_operators,
         param_replacement_file=args.param_replacement_file,
         check_gpu_delegate_compatibility=args.check_gpu_delegate_compatibility,
         check_onnx_tf_outputs_elementwise_close=args.check_onnx_tf_outputs_elementwise_close,
