@@ -1616,25 +1616,6 @@ def main():
         print(__version__)
         sys.exit(0)
 
-    # convert quant_calib_input_op_name_np_data_path
-    # [
-    #   [{input_op_name} {numpy_file_path} {mean} {std}],
-    #   [{input_op_name} {numpy_file_path} {mean} {std}],
-    #   [{input_op_name} {numpy_file_path} {mean} {std}],
-    # ]
-    calib_params = []
-    if args.quant_calib_input_op_name_np_data_path is not None:
-        for param in args.quant_calib_input_op_name_np_data_path:
-            input_op_name = str(param[0])
-            numpy_file_path = str(param[1])
-            mean = np.asarray(ast.literal_eval(param[2]), dtype=np.float32)
-            std = np.asarray(ast.literal_eval(param[3]), dtype=np.float32)
-            calib_params.append(
-                [input_op_name, numpy_file_path, mean, std]
-            )
-    if len(calib_params) == 0:
-        calib_params = None
-
     args.replace_to_pseudo_operators = [
         name.lower() for name in args.replace_to_pseudo_operators
     ]
