@@ -897,10 +897,11 @@ def convert(
                 for image_path in image_paths:
                     calib_data_list = []
                     img = cv2.imread(image_path)
+                    img = img[..., ::-1]  # BGR->RGB
                     for model_input in model.inputs:
                         img = cv2.resize(img, (model_input.shape[2], model_input.shape[1]))
-                        if quant_calib_data_swap_rb_channels:
-                            img = img[..., ::-1]  # BGR->RGB
+                        if not quant_calib_data_swap_rb_channels:
+                            img = img[..., ::-1]  # RGB->BGR
                         img = img[np.newaxis, ...].astype(np.float32) / quant_calib_data_input_scaler
                         calib_data_list.append(img)
                     yield calib_data_list
