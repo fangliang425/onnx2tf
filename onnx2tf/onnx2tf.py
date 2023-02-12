@@ -49,6 +49,7 @@ from onnx2tf.utils.common_functions import (
     download_test_image_data,
     get_tf_model_inputs,
     get_tf_model_outputs,
+    rewrite_tflite_inout_opname,
 )
 from onnx2tf.utils.colors import Color
 from sng4onnx import generate as op_name_auto_generate
@@ -61,6 +62,7 @@ def convert(
     output_signaturedefs: Optional[bool] = False,
     output_h5: Optional[bool] = False,
     output_weights: Optional[bool] = False,
+    copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
     output_integer_quantized_tflite: Optional[bool] = False,
     quant_type: Optional[str] = 'per-channel',
     quant_calib_data_path: Optional[str] = None,
@@ -126,6 +128,17 @@ def convert(
 
     output_weights: Optional[bool]
         Output weights in hdf5 format.
+
+    copy_onnx_input_output_names_to_tflite: Optional[bool]
+        Copy the input/output OP name of ONNX to the input/output OP name of tflite.\n
+        Due to Tensorflow internal operating specifications,\n
+        the input/output order of ONNX does not necessarily match\n
+        the input/output order of tflite.\n
+        Be sure to check that the input/output OP names in the generated\n
+        tflite file have been converted as expected.\n
+        Also, this option generates a huge JSON file as a temporary file for processing.\n
+        Therefore, it is strongly discouraged to use it on large models of hundreds\n
+        of megabytes or more.
 
     output_integer_quantized_tflite: Optional[bool]
         Output of integer quantized tflite.
@@ -453,6 +466,10 @@ def convert(
         try:
             with open(param_replacement_file, 'r') as f:
                 replacement_parameters = json.load(f)['operations']
+                for operations in replacement_parameters:
+                    operations['op_name'] = operations['op_name'].replace(':','_')
+                    if output_signaturedefs:
+                        operations['op_name'] = re.sub('^/', 'wa/', operations['op_name'])
         except json.decoder.JSONDecodeError as ex:
             print(
                 f'{Color.RED}ERROR:{Color.RESET} ' +
@@ -638,6 +655,13 @@ def convert(
         print(f'{Color.REVERCE}Model convertion started{Color.RESET}', '=' * 60)
 
     with graph.node_ids():
+        onnx_graph_input_names: List[str] = [
+            inputop.name for inputop in graph.inputs
+        ]
+        onnx_graph_output_names: List[str] = [
+            outputop.name for outputop in graph.outputs
+        ]
+
         # Inputs
         for graph_input in graph.inputs:
             """
@@ -713,6 +737,10 @@ def convert(
             tf_layers_dict=tf_layers_dict,
             output_names=output_names,
         )
+
+        # Bring back output names from ONNX model
+        for output, name in zip(outputs, output_names):
+            output.node.layer._name = name
 
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
         if not non_verbose:
@@ -795,6 +823,13 @@ def convert(
         tflite_model = converter.convert()
         with open(f'{output_folder_path}/{output_file_name}_float32.tflite', 'wb') as w:
             w.write(tflite_model)
+        if copy_onnx_input_output_names_to_tflite:
+            rewrite_tflite_inout_opname(
+                output_folder_path=output_folder_path,
+                tflite_file_name=f'{output_file_name}_float32.tflite',
+                onnx_input_names=onnx_graph_input_names,
+                onnx_output_names=onnx_graph_output_names,
+            )
         if output_weights:
             weights_export(
                 extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_float32.tflite',
@@ -812,6 +847,13 @@ def convert(
         tflite_model = converter.convert()
         with open(f'{output_folder_path}/{output_file_name}_float16.tflite', 'wb') as w:
             w.write(tflite_model)
+        if copy_onnx_input_output_names_to_tflite:
+            rewrite_tflite_inout_opname(
+                output_folder_path=output_folder_path,
+                tflite_file_name=f'{output_file_name}_float16.tflite',
+                onnx_input_names=onnx_graph_input_names,
+                onnx_output_names=onnx_graph_output_names,
+            )
         if output_weights:
             weights_export(
                 extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_float16.tflite',
@@ -853,6 +895,13 @@ def convert(
                 tflite_model = converter.convert()
                 with open(f'{output_folder_path}/{output_file_name}_dynamic_range_quant.tflite', 'wb') as w:
                     w.write(tflite_model)
+                if copy_onnx_input_output_names_to_tflite:
+                    rewrite_tflite_inout_opname(
+                        output_folder_path=output_folder_path,
+                        tflite_file_name=f'{output_file_name}_dynamic_range_quant.tflite',
+                        onnx_input_names=onnx_graph_input_names,
+                        onnx_output_names=onnx_graph_output_names,
+                    )
                 if output_weights:
                     weights_export(
                         extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_dynamic_range_quant.tflite',
@@ -898,10 +947,17 @@ def convert(
                     ]
                     converter._experimental_disable_per_channel = disable_per_channel
                     converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
-                    converter.representative_dataset = lambda: representative_dataset_gen(quant_calib_data_path, quant_calib_data_num)
+                    converter.representative_dataset = representative_dataset_gen
                     tflite_model = converter.convert()
                     with open(f'{output_folder_path}/{output_file_name}_integer_quant.tflite', 'wb') as w:
                         w.write(tflite_model)
+                    if copy_onnx_input_output_names_to_tflite:
+                        rewrite_tflite_inout_opname(
+                            output_folder_path=output_folder_path,
+                            tflite_file_name=f'{output_file_name}_integer_quant.tflite',
+                            onnx_input_names=onnx_graph_input_names,
+                            onnx_output_names=onnx_graph_output_names,
+                        )
                     if output_weights:
                         weights_export(
                             extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_integer_quant.tflite',
@@ -932,6 +988,13 @@ def convert(
                 tflite_model = converter.convert()
                 with open(f'{output_folder_path}/{output_file_name}_full_integer_quant.tflite', 'wb') as w:
                     w.write(tflite_model)
+                if copy_onnx_input_output_names_to_tflite:
+                    rewrite_tflite_inout_opname(
+                        output_folder_path=output_folder_path,
+                        tflite_file_name=f'{output_file_name}_full_integer_quant.tflite',
+                        onnx_input_names=onnx_graph_input_names,
+                        onnx_output_names=onnx_graph_output_names,
+                    )
                 if output_weights:
                     weights_export(
                         extract_target_tflite_file_path=f'{output_folder_path}/{output_file_name}_full_integer_quant.tflite',
@@ -959,12 +1022,19 @@ def convert(
                     ]
                     converter._experimental_disable_per_channel = disable_per_channel
                     converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
-                    converter.representative_dataset = lambda: representative_dataset_gen(quant_calib_data_path, quant_calib_data_num)
+                    converter.representative_dataset = representative_dataset_gen
                     converter.inference_input_type = tf.float32
                     converter.inference_output_type = tf.float32
                     tflite_model = converter.convert()
                     with open(f'{output_folder_path}/{output_file_name}_integer_quant_with_int16_act.tflite', 'wb') as w:
                         w.write(tflite_model)
+                    if copy_onnx_input_output_names_to_tflite:
+                        rewrite_tflite_inout_opname(
+                            output_folder_path=output_folder_path,
+                            tflite_file_name=f'{output_file_name}_integer_quant_with_int16_act.tflite',
+                            onnx_input_names=onnx_graph_input_names,
+                            onnx_output_names=onnx_graph_output_names,
+                        )
                     if not non_verbose:
                         print(f'{Color.GREEN}INT8 Quantization with int16 activations tflite output complete!{Color.RESET}')
                 except RuntimeError as ex:
@@ -986,12 +1056,19 @@ def convert(
                     ]
                     converter._experimental_disable_per_channel = disable_per_channel
                     converter._experimental_disable_batchmatmul_unfold = not enable_batchmatmul_unfold
-                    converter.representative_dataset = lambda: representative_dataset_gen(quant_calib_data_path, quant_calib_data_num)
+                    converter.representative_dataset = representative_dataset_gen
                     converter.inference_input_type = tf.int16
                     converter.inference_output_type = tf.int16
                     tflite_model = converter.convert()
                     with open(f'{output_folder_path}/{output_file_name}_full_integer_quant_with_int16_act.tflite', 'wb') as w:
                         w.write(tflite_model)
+                    if copy_onnx_input_output_names_to_tflite:
+                        rewrite_tflite_inout_opname(
+                            output_folder_path=output_folder_path,
+                            tflite_file_name=f'{output_file_name}_full_integer_quant_with_int16_act.tflite',
+                            onnx_input_names=onnx_graph_input_names,
+                            onnx_output_names=onnx_graph_output_names,
+                        )
                     if not non_verbose:
                         print(f'{Color.GREEN}Full INT8 Quantization with int16 activations tflite output complete!{Color.RESET}')
                 except RuntimeError as ex:
@@ -1229,6 +1306,21 @@ def main():
         action='store_true',
         help=\
             'Output weights in hdf5 format.'
+    )
+    parser.add_argument(
+        '-coion',
+        '--copy_onnx_input_output_names_to_tflite',
+        action='store_true',
+        help=\
+            'Copy the input/output OP name of ONNX to the input/output OP name of tflite. \n' +
+            'Due to Tensorflow internal operating specifications, \n' +
+            'the input/output order of ONNX does not necessarily match \n' +
+            'the input/output order of tflite. \n' +
+            'Be sure to check that the input/output OP names in the generated \n' +
+            'tflite file have been converted as expected. \n' +
+            'Also, this option generates a huge JSON file as a temporary file for processing. \n' +
+            'Therefore, it is strongly discouraged to use it on large models of hundreds \n'
+            'of megabytes or more.'
     )
     parser.add_argument(
         '-oiqt',
@@ -1616,6 +1708,25 @@ def main():
         print(__version__)
         sys.exit(0)
 
+    # convert quant_calib_input_op_name_np_data_path
+    # [
+    #   [{input_op_name} {numpy_file_path} {mean} {std}],
+    #   [{input_op_name} {numpy_file_path} {mean} {std}],
+    #   [{input_op_name} {numpy_file_path} {mean} {std}],
+    # ]
+    calib_params = []
+    if args.quant_calib_input_op_name_np_data_path is not None:
+        for param in args.quant_calib_input_op_name_np_data_path:
+            input_op_name = str(param[0])
+            numpy_file_path = str(param[1])
+            mean = np.asarray(ast.literal_eval(param[2]), dtype=np.float32)
+            std = np.asarray(ast.literal_eval(param[3]), dtype=np.float32)
+            calib_params.append(
+                [input_op_name, numpy_file_path, mean, std]
+            )
+    if len(calib_params) == 0:
+        calib_params = None
+
     args.replace_to_pseudo_operators = [
         name.lower() for name in args.replace_to_pseudo_operators
     ]
@@ -1627,6 +1738,7 @@ def main():
         output_signaturedefs=args.output_signaturedefs,
         output_h5=args.output_h5,
         output_weights=args.output_weights,
+        copy_onnx_input_output_names_to_tflite=args.copy_onnx_input_output_names_to_tflite,
         output_integer_quantized_tflite=args.output_integer_quantized_tflite,
         quant_type=args.quant_type,
         quant_calib_data_path=args.quant_calib_data_path,
