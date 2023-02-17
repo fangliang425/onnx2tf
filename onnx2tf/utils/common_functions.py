@@ -243,6 +243,7 @@ def make_tf_node_info(**kwargs):
 def print_node_info(func):
     @wraps(func)
     def print_wrapper_func(*args, **kwargs):
+        input_onnx_file_path: str = kwargs.get('input_onnx_file_path', None)
         graph_input: gs.Variable = kwargs.get('graph_input', None)
         graph_node: gs.Variable = kwargs.get('graph_node', None)
         tf_layers_dict: dict = kwargs.get('tf_layers_dict', None)
@@ -317,6 +318,16 @@ def print_node_info(func):
         except:
             print(f'{Color.RED}ERROR:{Color.RESET} The trace log is below.')
             traceback.print_exc()
+            if input_onnx_file_path is not None:
+                print(
+                    f'{Color.RED}ERROR:{Color.RESET} ' +
+                    f'input_onnx_file_path: {input_onnx_file_path}'
+                )
+            if graph_node is not None:
+                print(
+                    f'{Color.RED}ERROR:{Color.RESET} ' +
+                    f'onnx_op_name: {graph_node.name}'
+                )
             print(
                 f'{Color.RED}ERROR:{Color.RESET} ' +
                 f'Read this and deal with it. https://github.com/PINTO0309/onnx2tf#parameter-replacement'
@@ -1511,43 +1522,10 @@ def alternative_atan2(
     pseudo_atan2: Tensor
         Converted Atan2
     """
-    abs_x = tf.math.abs(input_tensor_x)
-    abs_y = tf.math.abs(input_tensor_y)
-    t3 = tf.math.abs(input_tensor_x)
-    t1 = tf.math.abs(input_tensor_y)
-    t0 = tf.maximum(t3, t1)
-    t1 = tf.minimum(t3, t1)
-    t3 = 1.0 / t0
-    t3 = t1 * t3
-    t4 = t3 * t3
-    t0 = -0.013480470
-    t0 = t0 * t4 + 0.057477314
-    t0 = t0 * t4 - 0.121239071
-    t0 = t0 * t4 + 0.195635925
-    t0 = t0 * t4 - 0.332994597
-    t0 = t0 * t4 + 0.999995630
-    t3 = t0 * t3
-    t3 = tf.where(
-        condition=tf.math.greater(abs_y, abs_x),
-        x=1.570796327 - t3,
-        y=t3,
+    pseudo_atan2 = tf.math.atan2(
+        y=input_tensor_y,
+        x=input_tensor_x,
     )
-    t3 = tf.where(
-        condition=tf.math.less(input_tensor_x, 0),
-        x=3.141592654 - t3,
-        y=t3,
-    )
-    pseudo_atan2 = tf.where(
-        condition=tf.math.less(input_tensor_y, 0),
-        x=-t3,
-        y=t3,
-    )
-    # TODO: Switch to standard OP with TF v2.12.0 or later
-    # Skip TF v2.11.0 as it is heavily broken
-    # pseudo_atan2 = tf.math.atan2(
-    #     y=input_tensor_y,
-    #     x=input_tensor_x,
-    # )
     return pseudo_atan2
 
 
@@ -1571,7 +1549,7 @@ def alternative_atan(
     """
     return alternative_atan2(
         input_tensor_y=input_tensor,
-        input_tensor_x=1.0,
+        input_tensor_x=tf.broadcast_to(1.0, shape=input_tensor.shape),
     )
 
 
@@ -2421,6 +2399,8 @@ def replace_max_values_negative_values(
     return index_list
 
 
+# https://github.com/tensorflow/tensorflow/releases/tag/v2.12.0-rc0
+# Transpose v5->v6, 5D->6D
 def transpose_with_flexing_deterrence(
     *,
     input_tensor: Any,
@@ -2485,8 +2465,8 @@ def transpose_with_flexing_deterrence(
         # Obtain a shape with the dimension with 1 element removed
         squeezed_original_shapes = squeezed_original_x.shape
 
-        if input_tensor_rank >= 6 \
-            and len(squeezed_original_shapes) <= 5 \
+        if input_tensor_rank >= 7 \
+            and len(squeezed_original_shapes) <= 6 \
             and x_shape_none_dims_count < 2 \
             and output_shape is not None:
             # Special Transpose.1
@@ -2514,7 +2494,7 @@ def transpose_with_flexing_deterrence(
                         dim if not isinstance(dim, str) else -1 for dim in output_shape
                     ],
                 )
-        elif input_tensor_rank >= 6 and x_shape_none_dims_count == 0:
+        elif input_tensor_rank >= 7 and x_shape_none_dims_count == 0:
             # Special Transpose.2
             #   Suppresses as much as possible the conversion of transposes
             #   of 6 or more dimensions into FlexTransposes.
@@ -2878,6 +2858,7 @@ def dummy_tf_inference(
     model: tf.keras.Model,
     inputs: List[tf.keras.Input],
     test_data_nhwc: Optional[np.ndarray] = None,
+    verification_datas: Optional[List[np.ndarray]] = None,
 ) -> Any:
     """Perform inference on TF subgraphs with an all-1 dummy tensor.
 
@@ -2917,18 +2898,36 @@ def dummy_tf_inference(
     input_sizes = new_input_sizes
     input_dtypes: List[Any] = [inp.dtype for inp in inputs]
     dummy_datas = {}
-    for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
-        if test_data_nhwc is None:
-            dummy_datas[input_name] = np.ones(
-                input_size,
-                dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
-            )
-        else:
-            dummy_datas[input_name] = \
-                tf.image.resize(
-                    images=test_data_nhwc,
-                    size=[input_size[1],input_size[2]],
-                ).numpy().astype(TF_DTYPES_TO_NUMPY_DTYPES[input_dtype])
+    if verification_datas is None:
+        for input_name, input_size, input_dtype in zip(input_names, input_sizes, input_dtypes):
+            if test_data_nhwc is None:
+                dummy_datas[input_name] = np.ones(
+                    input_size,
+                    dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
+                )
+            else:
+                dummy_datas[input_name] = \
+                    tf.image.resize(
+                        images=test_data_nhwc,
+                        size=[input_size[1],input_size[2]],
+                    ).numpy().astype(TF_DTYPES_TO_NUMPY_DTYPES[input_dtype])
+    else:
+        for input_name, input_size, input_dtype, verification_data \
+            in zip(input_names, input_sizes, input_dtypes, verification_datas):
+
+            if verification_data is not None:
+                if len(input_size) != len(verification_data.shape):
+                    if len(verification_data.shape) <= 1:
+                        dummy_datas[input_name] = verification_data
+                    else:
+                        dummy_datas[input_name] = verification_data.reshape(input_size)
+                else:
+                    dummy_datas[input_name] = verification_data
+            else:
+                dummy_datas[input_name] = np.ones(
+                    input_size,
+                    dtype=TF_DTYPES_TO_NUMPY_DTYPES[input_dtype],
+                )
     outputs = model(
         inputs={
             input.name: dummy_datas[input.name] for input in inputs
@@ -3371,8 +3370,9 @@ def get_tf_model_outputs(
     """
     tf_model_outputs = []
     for name in output_names:
-        op = tf_layers_dict[name]
-        tf_model_outputs.append(op['tf_node'])
+        if name in tf_layers_dict:
+            op = tf_layers_dict[name]
+            tf_model_outputs.append(op['tf_node'])
     return tf_model_outputs
 
 
@@ -3486,3 +3486,63 @@ def rewrite_tflite_inout_opname(
                 'debian/ubuntu: apt install -y flatbuffers-compiler ' +
                 'Other than debian/ubuntu: https://github.com/google/flatbuffers/releases'
             )
+
+
+def make_tf_partial_model_inputs(
+    *,
+    input_tensors: List[Any],
+) -> List[tf.keras.Input]:
+    """Generate input OPs for TensorFlow subgraph generation.
+
+    Parameters
+    ----------
+    input_tensors: List[Any]
+        List of input tensor
+
+    Returns
+    -------
+    inputs: List[tf.keras.Input]
+        List of tf.keras.Input
+    """
+    # Generate input OPs for TensorFlow subgraphs
+    # For inference testing on OP stand-alone
+    tf_partial_model_input_shapes = []
+    tf_partial_model_input_dtypes = []
+    for input_tensor in input_tensors:
+        if input_tensor.shape is None \
+            or input_tensor.shape == tf.TensorShape(None):
+            return None
+        else:
+            tf_partial_model_input_shape = [dim for dim in input_tensor.shape]
+            if None in tf_partial_model_input_shape:
+                return None
+            tf_partial_model_input_shapes.append(
+                tf_partial_model_input_shape
+            )
+            tf_partial_model_input_dtypes.append(
+                NUMPY_DTYPES_TO_TF_DTYPES[input_tensor.dtype] \
+                    if isinstance(input_tensor.dtype, np.dtype) else input_tensor.dtype
+            )
+
+    inputs: List[tf.keras.Input] = []
+    input = None
+    for idx, input_shape in enumerate(tf_partial_model_input_shapes):
+        if isinstance(input_shape, list) and len(input_shape) == 0:
+            tf_partial_model_input_shapes[idx] = [1]
+    for input_shape, input_dtype in zip(tf_partial_model_input_shapes, tf_partial_model_input_dtypes):
+        if len(input_shape) == 1:
+            input = tf.keras.Input(
+                shape=input_shape[0] if isinstance(input_shape[0], int) else None,
+                batch_size=1,
+                dtype=input_dtype,
+            )
+        elif len(input_shape) >= 2:
+            input = tf.keras.Input(
+                shape=[
+                    inp if isinstance(inp, int) else None for inp in input_shape[1:]
+                ],
+                batch_size=input_shape[0] if isinstance(input_shape[0], int) else None,
+                dtype=input_dtype,
+            )
+        inputs.append(input)
+    return inputs

@@ -61,6 +61,7 @@ def convert(
     output_folder_path: Optional[str] = 'saved_model',
     output_signaturedefs: Optional[bool] = False,
     output_h5: Optional[bool] = False,
+    output_keras_v3: Optional[bool] = False,
     output_weights: Optional[bool] = False,
     copy_onnx_input_output_names_to_tflite: Optional[bool] = False,
     output_integer_quantized_tflite: Optional[bool] = False,
@@ -83,7 +84,7 @@ def convert(
     disable_group_convolution: Optional[bool] = False,
     enable_batchmatmul_unfold: Optional[bool] = False,
     disable_suppression_flextranspose: Optional[bool] = False,
-    number_of_dimensions_after_flextranspose_compression: Optional[int] = 5,
+    number_of_dimensions_after_flextranspose_compression: Optional[int] = 6,
     optimization_for_gpu_delegate: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_int64: Optional[bool] = False,
     replace_argmax_to_reducemax_and_indicies_is_float32: Optional[bool] = False,
@@ -125,6 +126,9 @@ def convert(
 
     output_h5: Optional[bool]
         Output model in Keras (hdf5) format.
+
+    output_keras_v3: Optional[bool]
+        Output model in Keras (keras_v3) format.
 
     output_weights: Optional[bool]
         Output weights in hdf5 format.
@@ -244,7 +248,7 @@ def convert(
 
     number_of_dimensions_after_flextranspose_compression: Optional[int]
         Number of Transpose OP dimensions generated after avoiding FlexTranspose generation.\n
-        Default: 5
+        Default: 6
 
     optimization_for_gpu_delegate: Optional[bool]
         Replace operations that do not support gpu delegate with those\n
@@ -627,6 +631,7 @@ def convert(
 
     # Define additional parameters
     additional_parameters = {
+        'input_onnx_file_path': input_onnx_file_path if input_onnx_file_path is not None else None,
         'onnx_graph': onnx_graph,
         'opset': graph.opset,
         'batch_size': batch_size,
@@ -740,7 +745,9 @@ def convert(
 
         # Bring back output names from ONNX model
         for output, name in zip(outputs, output_names):
-            output.node.layer._name = name
+            output.node.layer._name = name.replace(':','_')
+            if output_signaturedefs:
+                output.node.layer._name = re.sub('^/', '', output.node.layer._name)
 
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
         if not non_verbose:
@@ -748,13 +755,21 @@ def convert(
             model.summary(line_length=140)
             print('')
 
-        # Output in Keras H5 format
+        # Output in Keras h5 format
         if output_h5:
             if not non_verbose:
                 print(f'{Color.REVERCE}h5 output started{Color.RESET}', '=' * 67)
             model.save(f'{output_folder_path}/{output_file_name}_float32.h5')
             if not non_verbose:
                 print(f'{Color.GREEN}h5 output complete!{Color.RESET}')
+
+        # Output in Keras keras_v3 format
+        if output_keras_v3:
+            if not non_verbose:
+                print(f'{Color.REVERCE}keras_v3 output started{Color.RESET}', '=' * 61)
+            model.save(f'{output_folder_path}/{output_file_name}_float32.keras', save_format="keras_v3")
+            if not non_verbose:
+                print(f'{Color.GREEN}keras_v3 output complete!{Color.RESET}')
 
         # Create concrete func
         run_model = tf.function(lambda *inputs : model(inputs))
@@ -1298,6 +1313,13 @@ def main():
             'Output model in Keras (hdf5) format.'
     )
     parser.add_argument(
+        '-okv3',
+        '--output_keras_v3',
+        action='store_true',
+        help=\
+            'Output model in Keras (keras_v3) format.'
+    )
+    parser.add_argument(
         '-ow',
         '--output_weights',
         action='store_true',
@@ -1515,10 +1537,10 @@ def main():
         '-nodafc',
         '--number_of_dimensions_after_flextranspose_compression',
         type=int,
-        default=5,
+        default=6,
         help=\
             'Number of Transpose OP dimensions generated after avoiding FlexTranspose generation. \n' +
-            'Default: 5'
+            'Default: 6'
     )
     parser.add_argument(
         '-ofgd',
@@ -1715,6 +1737,7 @@ def main():
         output_folder_path=args.output_folder_path,
         output_signaturedefs=args.output_signaturedefs,
         output_h5=args.output_h5,
+        output_keras_v3=args.output_keras_v3,
         output_weights=args.output_weights,
         copy_onnx_input_output_names_to_tflite=args.copy_onnx_input_output_names_to_tflite,
         output_integer_quantized_tflite=args.output_integer_quantized_tflite,
