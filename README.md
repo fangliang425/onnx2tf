@@ -5,7 +5,7 @@ Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras forma
   <img src="https://user-images.githubusercontent.com/33194443/193840307-fa69eace-05a9-4d93-9c5d-999cf88af28e.png" />
 </p>
 
-[![Downloads](https://static.pepy.tech/personalized-badge/onnx2tf?period=total&units=none&left_color=grey&right_color=brightgreen&left_text=Downloads)](https://pepy.tech/project/onnx2tf) ![GitHub](https://img.shields.io/github/license/PINTO0309/onnx2tf?color=2BAF2B) [![Python](https://img.shields.io/badge/Python-3.8-2BAF2B)](https://img.shields.io/badge/Python-3.8-2BAF2B) [![PyPI](https://img.shields.io/pypi/v/onnx2tf?color=2BAF2B)](https://pypi.org/project/onnx2tf/) [![CodeQL](https://github.com/PINTO0309/onnx2tf/workflows/CodeQL/badge.svg)](https://github.com/PINTO0309/onnx2tf/actions?query=workflow%3ACodeQL) ![Model Convert Test Status](https://github.com/PINTO0309/onnx2tf/workflows/Model%20Convert%20Test/badge.svg) [![DOI](https://zenodo.org/badge/541831874.svg)](https://zenodo.org/badge/latestdoi/541831874)
+[![Downloads](https://static.pepy.tech/personalized-badge/onnx2tf?period=total&units=none&left_color=grey&right_color=brightgreen&left_text=Downloads)](https://pepy.tech/project/onnx2tf) ![GitHub](https://img.shields.io/github/license/PINTO0309/onnx2tf?color=2BAF2B) [![Python](https://img.shields.io/badge/Python-3.8-2BAF2B)](https://img.shields.io/badge/Python-3.8-2BAF2B) [![PyPI](https://img.shields.io/pypi/v/onnx2tf?color=2BAF2B)](https://pypi.org/project/onnx2tf/) [![CodeQL](https://github.com/PINTO0309/onnx2tf/workflows/CodeQL/badge.svg)](https://github.com/PINTO0309/onnx2tf/actions?query=workflow%3ACodeQL) ![Model Convert Test Status](https://github.com/PINTO0309/onnx2tf/workflows/Model%20Convert%20Test/badge.svg) [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.7230085.svg)](https://doi.org/10.5281/zenodo.7230085)
 
 ## Model Conversion Status
 https://github.com/PINTO0309/onnx2tf/wiki/model_status
@@ -23,9 +23,13 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - simple_onnx_processing_tools
 - tensorflow==2.12.0rc0
 - flatbuffers-compiler (Optional, Only when using the `-coion` option. Executable file named `flatc`.)
-  ```
-  Debian/Ubuntu: sudo apt-get install -y flatbuffers-compiler
-  Other than Debian/Ubuntu: https://github.com/google/flatbuffers/releases
+  ```bash
+  # Custom flatc binary for Ubuntu 20.04+
+  # https://github.com/PINTO0309/onnx2tf/issues/196
+  wget https://github.com/PINTO0309/onnx2tf/releases/download/1.7.3/flatc.tar.gz \
+    && tar -zxvf flatc.tar.gz \
+    && sudo chmod +x flatc \
+    && sudo mv flatc /usr/bin/
   ```
 
 ## Sample Usage
@@ -35,7 +39,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.7.0
+  ghcr.io/pinto0309/onnx2tf:1.7.4
 
   or
 
@@ -64,7 +68,10 @@ or
   !sudo apt-get -y install python3.9-dev
   !sudo apt-get -y install python3-pip
   !sudo apt-get -y install python3.9-distutils
-  !sudo apt-get -y install flatbuffers-compiler
+  !wget https://github.com/PINTO0309/onnx2tf/releases/download/1.7.3/flatc.tar.gz \
+    && tar -zxvf flatc.tar.gz \
+    && sudo chmod +x flatc \
+    && sudo mv flatc /usr/bin/
   !python3.9 -m pip install -U setuptools \
     && python3.9 -m pip install -U pip \
     && python3.9 -m pip install -U distlib
@@ -351,7 +358,8 @@ optional arguments:
 
   -nodafc, --number_of_dimensions_after_flextranspose_compression
     Number of Transpose OP dimensions generated after avoiding FlexTranspose generation.
-    Default: 5
+    Also suppress the creation of the Transpose itself by specifying 2.
+    Default: 6
 
   -ofgd, --optimization_for_gpu_delegate
     Replace operations that do not support gpu delegate with those
@@ -756,7 +764,8 @@ convert(
 
     number_of_dimensions_after_flextranspose_compression: Optional[int]
       Number of Transpose OP dimensions generated after avoiding FlexTranspose generation.
-      Default: 5
+      Also suppress the creation of the Transpose itself by specifying 2.
+      Default: 6
 
     optimization_for_gpu_delegate: Optional[bool]
         Replace operations that do not support gpu delegate with those
