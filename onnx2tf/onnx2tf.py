@@ -67,7 +67,7 @@ def convert(
     output_integer_quantized_tflite: Optional[bool] = False,
     quant_type: Optional[str] = 'per-channel',
     quant_calib_data_path: Optional[str] = None,
-    quant_calib_data_num: Optional[int] = 500,
+    quant_calib_data_num: Optional[int] = 100,
     quant_calib_data_input_scaler: Optional[float] = 255.0,
     quant_calib_data_swap_rb_channels: Optional[int] = 1,
     input_output_quant_dtype: Optional[str] = 'int8',
@@ -934,8 +934,29 @@ def convert(
                         'Dynamic Range Quantization tflite output failed.'
                     )
 
+            # download coco128 dataset if quant_calib_data_path not specified
+            if quant_calib_data_path is None:
+                import wget
+                import zipfile
+
+                url = "https://storage.googleapis.com/kaggle-data-sets/756977/4352009/bundle/archive.zip?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=gcp-kaggle-com%40kaggle-161607.iam.gserviceaccount.com%2F20230223%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20230223T131439Z&X-Goog-Expires=259200&X-Goog-SignedHeaders=host&X-Goog-Signature=24cd1fe965596983e7ba6a4a72f22a0c21414cafd89dd0dec61290ec92e5f52a874fc54417a9a3b4a402f2f97298d82be0f773994d1ef8aba28e15211dcca5999822cc6826f6c9b1c6bfddcf621408371922dffc6e9c4c2a4c302c70e19335a2bdc370fbe7971fa2a67392c84b13860008e9e5803d4109593fa673110874b29e438ae24943c87ecc87ee3f047ff3cbadc49f7523b27f51b5a7ca3d69dbcf43c24e03563d0736111af56ac9afff8249e542df82c248e4bdac92956e4734fdce8306cf3bf723f6cef567299030dec2e5f2f7ca12e8e998578189fd7b2a3dec9553c5f2f09eef880eeb7c2201bf83f1702b6f4357bea0ce6eaf04cea2776473d273"
+                zipfile_path = "/tmp/coco128.zip"
+                if not os.path.exists(zipfile_path):
+                    print("Downloaing coco128 dataset...")
+                    file_path = wget.download(url, zipfile_path)
+                    print(f"{file_path} downloaded")
+
+                unzipfile_path = os.path.dirname(zipfile_path) + os.sep + "coco128"
+                if not os.path.exists(unzipfile_path):
+                    print("Unzipping...")
+                    zf = zipfile.ZipFile(zipfile_path)
+                    zf.extractall(path=os.path.dirname(zipfile_path))
+                    print(f"{unzipfile_path} zipped")
+                quant_calib_data_path = unzipfile_path + "/images/train2017"
+            print(f"Calibration dataset is {quant_calib_data_path}")
+
             # representative_dataset_gen
-            def representative_dataset_gen(data_path, num=500):
+            def representative_dataset_gen(data_path, num=100):
                 image_paths = glob.glob(data_path + os.sep + "*.jpg")
 
                 for n, image_path in enumerate(image_paths):
@@ -1361,7 +1382,7 @@ def main():
         '-qcdp',
         '--quant_calib_data_path',
         type=str,
-        required=True,
+        default=None,
         help=\
             'Path of calibration data file for quantization.'
     )
@@ -1369,6 +1390,7 @@ def main():
         '-qcdn',
         '--quant_calib_data_num',
         type=int,
+        default=100,
         help=\
             'Number of calibration data file for quantization.'
     )
