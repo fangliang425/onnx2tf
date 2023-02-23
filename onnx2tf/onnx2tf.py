@@ -937,19 +937,17 @@ def convert(
             # representative_dataset_gen
             def representative_dataset_gen(data_path, num=500):
                 image_paths = glob.glob(data_path + os.sep + "*.jpg")
-                image_paths = image_paths[:num]
 
-                for image_path in image_paths:
-                    calib_data_list = []
+                for n, image_path in enumerate(image_paths):
                     img = cv2.imread(image_path)
                     img = img[..., ::-1]  # BGR->RGB
-                    for model_input in model.inputs:
-                        img = cv2.resize(img, (model_input.shape[2], model_input.shape[1]))
-                        if not quant_calib_data_swap_rb_channels:
-                            img = img[..., ::-1]  # RGB->BGR
-                        img = img[np.newaxis, ...].astype(np.float32) / quant_calib_data_input_scaler
-                        calib_data_list.append(img)
-                    yield calib_data_list
+                    img = cv2.resize(img, (model.inputs[0].shape[2], model.inputs[0].shape[1]))
+                    if not quant_calib_data_swap_rb_channels:
+                        img = img[..., ::-1]  # RGB->BGR
+                    img = img[np.newaxis, ...].astype(np.float32) / quant_calib_data_input_scaler
+                    yield [img]
+                    if n >= num:
+                        break
 
             # INT8 Quantization
             try:
