@@ -30,6 +30,11 @@ Video speed is adjusted approximately 50 times slower than actual speed.
     && tar -zxvf flatc.tar.gz \
     && sudo chmod +x flatc \
     && sudo mv flatc /usr/bin/
+
+  # Custom flatc binary for Windows
+  # Set the environment variable paths appropriately on your own.
+  # https://github.com/PINTO0309/onnx2tf/issues/196
+  https://github.com/PINTO0309/onnx2tf/releases/download/1.7.3/flatc.exe
   ```
 
 ## Sample Usage
@@ -39,7 +44,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.7.4
+  ghcr.io/pinto0309/onnx2tf:1.7.7
 
   or
 
@@ -127,6 +132,113 @@ $ onnx2tf -i mobilenetv2-12.onnx -ois input:1,3,224,224 -cotof -cotoa 1e-1
 ```
 ![image](https://user-images.githubusercontent.com/33194443/216901668-5fdb1e38-8670-46a4-b4b9-8a774fa7545e.png)
 ![Kazam_screencast_00108_](https://user-images.githubusercontent.com/33194443/212460284-f3480105-4d94-4519-94dc-320d641f5647.gif)
+
+If you want to match tflite's input/output OP names and the order of input/output OPs with ONNX, you can use the `interpreter.get_signature_runner()` to infer this after using the `-osd` / `--output_signaturedefs` option to output `saved_model`. This workaround has already been available since a much earlier version of onnx2tf. Ref: https://github.com/PINTO0309/onnx2tf/pull/185
+```python
+import torch
+import onnxruntime
+import numpy as np
+import onnx2tf
+import tensorflow as tf
+from tensorflow.lite.python import interpreter as tflite_interpreter
+
+class Model(torch.nn.Module):
+    def forward(self, x, y):
+        return {
+            "add": x + y,
+            "sub": x - y,
+        }
+
+# Let's double check what PyTorch gives us
+model = Model()
+pytorch_output = model.forward(10, 2)
+print("[PyTorch] Model Predictions:", pytorch_output)
+
+# First, export the above model to ONNX
+torch.onnx.export(
+    Model(),
+    {"x": 10, "y": 2},
+    "model.onnx",
+    opset_version=16,
+    input_names=["x", "y"],
+    output_names=["add", "sub"],
+)
+
+# And check its output
+session = onnxruntime.InferenceSession("model.onnx")
+onnx_output = session.run(["add", "sub"], {"x": np.array(10), "y": np.array(2)})
+print("[ONNX] Model Outputs:", [o.name for o in session.get_outputs()])
+print("[ONNX] Model Predictions:", onnx_output)
+
+# Now, let's convert the ONNX model to TF
+onnx2tf.convert(
+    input_onnx_file_path="model.onnx",
+    output_folder_path="model.tf",
+    output_signaturedefs=True,
+    non_verbose=True,
+)
+
+# Let's check TensorFlow model
+tf_model = tf.saved_model.load("model.tf")
+tf_output = tf_model.signatures["serving_default"](
+    x=tf.constant((10,), dtype=tf.int64),
+    y=tf.constant((2,), dtype=tf.int64),
+)
+print("[TF] Model Predictions:", tf_output)
+
+# Rerun TFLite conversion but from saved model
+converter = tf.lite.TFLiteConverter.from_saved_model("model.tf")
+converter.target_spec.supported_ops = [
+    tf.lite.OpsSet.TFLITE_BUILTINS,
+    tf.lite.OpsSet.SELECT_TF_OPS,
+]
+tf_lite_model = converter.convert()
+with open("model.tf/model_float32.tflite", "wb") as f:
+    f.write(tf_lite_model)
+
+# Now, test the newer TFLite model
+interpreter = tf.lite.Interpreter(model_path="model.tf/model_float32.tflite")
+tf_lite_model = interpreter.get_signature_runner()
+tt_lite_output = tf_lite_model(
+    x=tf.constant((10,), dtype=tf.int64),
+    y=tf.constant((2,), dtype=tf.int64),
+)
+print("[TFLite] Model Predictions:", tt_lite_output)
+```
+```
+[PyTorch] Model Predictions:
+  {
+    'add': 12,
+    'sub': 8
+  }
+[ONNX] Model Outputs:
+  [
+    'add',
+    'sub'
+  ]
+[ONNX] Model Predictions:
+  [
+    array(12, dtype=int64),
+    array(8, dtype=int64)
+  ]
+[TF] Model Predictions:
+  {
+    'add': <tf.Tensor: shape=(1,), dtype=int64, numpy=array([12])>,
+    'sub': <tf.Tensor: shape=(1,), dtype=int64, numpy=array([8])>
+  }
+[TFLite] Model Predictions:
+  {
+    'add': array([12]),
+    'sub': array([8])
+  }
+```
+
+If you want to embed label maps, quantization parameters, descriptions, etc. into your tflite file, you can refer to the official tutorial and try it yourself. For now, this tool does not plan to implement the ability to append metadata, as I do not want to write byte arrays to the tflite file that are not essential to its operation.
+
+- Adding metadata to TensorFlow Lite models
+
+  https://www.tensorflow.org/lite/models/convert/metadata
+  ![image](https://user-images.githubusercontent.com/33194443/221345428-639ffa41-a03c-4d0b-bd72-9c23fb3847f3.png)
 
 ## CLI Parameter
 ```
@@ -1333,56 +1445,57 @@ ONNX file for testing. https://github.com/PINTO0309/onnx2tf/releases/tag/1.1.28
 |32|fused_conv_sigmoid.onnx|:heavy_check_mark:|
 |33|fused_conv_tanh.onnx|:heavy_check_mark:|
 |34|gender_googlenet.onnx|:heavy_check_mark:|
-|35|handpose_estimation_mediapipe_2022may.onnx|:heavy_check_mark:|
-|36|iat_llie_180x320.onnx|:heavy_check_mark:|
-|37|if_p1_11.onnx|:heavy_check_mark:|
-|38|if_p2_11.onnx|:heavy_check_mark:|
-|39|if_p3_11.onnx|:heavy_check_mark:|
-|40|imageclassifier.onnx|:heavy_check_mark:|
-|41|inception-v2-9.onnx|:heavy_check_mark:|
-|42|inverse11.onnx|:heavy_check_mark:|
-|43|mnist-12.onnx|:heavy_check_mark:|
-|44|mobilenetv2-12.onnx|:heavy_check_mark:|
-|45|mosaic_11.onnx|:heavy_check_mark:|
-|46|mosaic-9.onnx|:heavy_check_mark:|
-|47|movenet_multipose_lightning_192x256_p6.onnx|:heavy_check_mark:|
-|48|nanodet-plus-m_416.onnx|:heavy_check_mark:|
-|49|object_tracking_dasiamrpn_kernel_cls1_2021nov.onnx|:heavy_check_mark:|
-|50|object_tracking_dasiamrpn_kernel_r1_2021nov.onnx|:heavy_check_mark:|
-|51|object_tracking_dasiamrpn_model_2021nov.onnx|:heavy_check_mark:|
-|52|pidnet_S_cityscapes_192x320.onnx|:heavy_check_mark:|
-|53|ppmattingv2_stdc1_human_480x640.onnx|:heavy_check_mark:|
-|54|qlinear_conv_tensor_test.onnx|:heavy_check_mark:|
-|55|rcnn-ilsvrc13-9.onnx|:heavy_check_mark:|
-|56|regnet_x_400mf.onnx|:heavy_check_mark:|
-|57|ResNet101-DUC-12.onnx|:heavy_check_mark:|
-|58|resnet18-v1-7.onnx|:heavy_check_mark:|
-|59|resnet50-v1-12.onnx|:heavy_check_mark:|
-|60|resnet50-v2-7.onnx|:heavy_check_mark:|
-|61|retinanet-9.onnx|:heavy_check_mark:|
-|62|sinet_320_op.onnx|:heavy_check_mark:|
-|63|squeezenet1.0-12.onnx|:heavy_check_mark:|
-|64|super-resolution-10.onnx|:heavy_check_mark:|
-|65|swinir-m_64x64_12.onnx|:heavy_check_mark:|
-|66|tinyyolov2-8.onnx|:heavy_check_mark:|
-|67|version-RFB-640.onnx|:heavy_check_mark:|
-|68|vit-b-32_textual.onnx|:heavy_check_mark:|
-|69|vit-b-32_visual.onnx|:heavy_check_mark:|
-|70|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
-|71|yolact_regnetx_600mf_d2s_31classes_512x512.onnx|:heavy_check_mark:|
-|72|yolact_regnetx_800mf_20classes_512x512.onnx|:heavy_check_mark:|
-|73|yolo_free_nano_crowdhuman_192x320_post.onnx|:heavy_check_mark:|
-|74|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
-|75|yolov8n.onnx|:heavy_check_mark:|
-|76|yolov8n-seg.onnx|:heavy_check_mark:|
-|77|yolox_nano_192x192.onnx|:heavy_check_mark:|
-|78|yolox_nano_416x416.onnx|:heavy_check_mark:|
-|79|yolox_s.onnx|:heavy_check_mark:|
-|80|yolox_x_crowdhuman_mot17_bytetrack.onnx|:heavy_check_mark:|
-|81|zero_dce_640_dele.onnx|:heavy_check_mark:|
-|82|zfnet512-12.onnx|:heavy_check_mark:|
+|35|gmflow-scale1-mixdata-train320x576-4c3a6e9a_1x3x480x640_bidir_flow_sim.onnx|:heavy_check_mark:|
+|36|handpose_estimation_mediapipe_2022may.onnx|:heavy_check_mark:|
+|37|iat_llie_180x320.onnx|:heavy_check_mark:|
+|38|if_p1_11.onnx|:heavy_check_mark:|
+|39|if_p2_11.onnx|:heavy_check_mark:|
+|40|if_p3_11.onnx|:heavy_check_mark:|
+|41|imageclassifier.onnx|:heavy_check_mark:|
+|42|inception-v2-9.onnx|:heavy_check_mark:|
+|43|inverse11.onnx|:heavy_check_mark:|
+|44|mnist-12.onnx|:heavy_check_mark:|
+|45|mobilenetv2-12.onnx|:heavy_check_mark:|
+|46|mosaic_11.onnx|:heavy_check_mark:|
+|47|mosaic-9.onnx|:heavy_check_mark:|
+|48|movenet_multipose_lightning_192x256_p6.onnx|:heavy_check_mark:|
+|49|nanodet-plus-m_416.onnx|:heavy_check_mark:|
+|50|object_tracking_dasiamrpn_kernel_cls1_2021nov.onnx|:heavy_check_mark:|
+|51|object_tracking_dasiamrpn_kernel_r1_2021nov.onnx|:heavy_check_mark:|
+|52|object_tracking_dasiamrpn_model_2021nov.onnx|:heavy_check_mark:|
+|53|pidnet_S_cityscapes_192x320.onnx|:heavy_check_mark:|
+|54|ppmattingv2_stdc1_human_480x640.onnx|:heavy_check_mark:|
+|55|qlinear_conv_tensor_test.onnx|:heavy_check_mark:|
+|56|rcnn-ilsvrc13-9.onnx|:heavy_check_mark:|
+|57|regnet_x_400mf.onnx|:heavy_check_mark:|
+|58|ResNet101-DUC-12.onnx|:heavy_check_mark:|
+|59|resnet18-v1-7.onnx|:heavy_check_mark:|
+|60|resnet50-v1-12.onnx|:heavy_check_mark:|
+|61|resnet50-v2-7.onnx|:heavy_check_mark:|
+|62|retinanet-9.onnx|:heavy_check_mark:|
+|63|sinet_320_op.onnx|:heavy_check_mark:|
+|64|squeezenet1.0-12.onnx|:heavy_check_mark:|
+|65|super-resolution-10.onnx|:heavy_check_mark:|
+|66|swinir-m_64x64_12.onnx|:heavy_check_mark:|
+|67|tinyyolov2-8.onnx|:heavy_check_mark:|
+|68|version-RFB-640.onnx|:heavy_check_mark:|
+|69|vit-b-32_textual.onnx|:heavy_check_mark:|
+|70|vit-b-32_visual.onnx|:heavy_check_mark:|
+|71|yolact_edge_mobilenetv2_550x550.onnx|:heavy_check_mark:|
+|72|yolact_regnetx_600mf_d2s_31classes_512x512.onnx|:heavy_check_mark:|
+|73|yolact_regnetx_800mf_20classes_512x512.onnx|:heavy_check_mark:|
+|74|yolo_free_nano_crowdhuman_192x320_post.onnx|:heavy_check_mark:|
+|75|yolov7_tiny_head_0.768_post_480x640.onnx|:heavy_check_mark:|
+|76|yolov8n.onnx|:heavy_check_mark:|
+|77|yolov8n-seg.onnx|:heavy_check_mark:|
+|78|yolox_nano_192x192.onnx|:heavy_check_mark:|
+|79|yolox_nano_416x416.onnx|:heavy_check_mark:|
+|80|yolox_s.onnx|:heavy_check_mark:|
+|81|yolox_x_crowdhuman_mot17_bytetrack.onnx|:heavy_check_mark:|
+|82|zero_dce_640_dele.onnx|:heavy_check_mark:|
+|83|zfnet512-12.onnx|:heavy_check_mark:|
 
-  </div></details>
+</div></details>
 
 ## Key concept
 - [x] [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow) is a very useful tool, but the performance of the generated TensorFlow models is significantly degraded due to the extrapolation of a large number of `Transpose` OPs before and after each OP during the format conversion from `NCHW` to `NHWC`. Therefore, I will make this tool myself as a derivative tool of [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow) without extrapolating `Transpose`.
