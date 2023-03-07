@@ -39,13 +39,13 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   ```
 
 ## Sample Usage
-### [Note] v1.7.x implements an extensive additional mechanism that will be needed in the future to avoid post-conversion accuracy errors, so problems may occur that were not reproduced in v1.6.7. https://github.com/PINTO0309/onnx2tf/pull/184. If you have any inconvenience in using the tool, I recommend using v1.6.7.
+
 - HostPC
   ```
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.7.10
+  ghcr.io/pinto0309/onnx2tf:1.7.20
 
   or
 
@@ -53,7 +53,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   && pip install -U nvidia-pyindex \
   && pip install -U onnx-graphsurgeon \
   && pip install -U polygraphy \
-  && pip install -U onnxruntime \
+  && pip install -U onnxruntime==1.13.1 \
   && pip install -U onnxsim \
   && pip install -U simple_onnx_processing_tools \
   && pip install -U onnx2tf \
@@ -89,7 +89,7 @@ or
     && python3.9 -m pip install -U nvidia-pyindex \
     && python3.9 -m pip install -U onnx-graphsurgeon \
     && python3.9 -m pip install -U polygraphy \
-    && python3.9 -m pip install -U onnxruntime \
+    && python3.9 -m pip install -U onnxruntime==1.13.1 \
     && python3.9 -m pip install -U onnxsim \
     && python3.9 -m pip install -U simple_onnx_processing_tools \
     && python3.9 -m pip install -U onnx2tf \
@@ -136,7 +136,7 @@ $ onnx2tf -i mobilenetv2-12.onnx -ois input:1,3,224,224 -cotof -cotoa 1e-1
 ![image](https://user-images.githubusercontent.com/33194443/216901668-5fdb1e38-8670-46a4-b4b9-8a774fa7545e.png)
 ![Kazam_screencast_00108_](https://user-images.githubusercontent.com/33194443/212460284-f3480105-4d94-4519-94dc-320d641f5647.gif)
 
-If you want to match tflite's input/output OP names and the order of input/output OPs with ONNX, you can use the `interpreter.get_signature_runner()` to infer this after using the `-osd` / `--output_signaturedefs` option to output `saved_model`. This workaround has already been available since a much earlier version of onnx2tf. Ref: https://github.com/PINTO0309/onnx2tf/pull/185
+If you want to match tflite's input/output OP names and the order of input/output OPs with ONNX, you can use the `interpreter.get_signature_runner()` to infer this after using the `-coion` / `--copy_onnx_input_output_names_to_tflite` option to output tflite file. See: https://github.com/PINTO0309/onnx2tf/issues/228
 ```python
 import torch
 import onnxruntime
@@ -177,27 +177,9 @@ print("[ONNX] Model Predictions:", onnx_output)
 onnx2tf.convert(
     input_onnx_file_path="model.onnx",
     output_folder_path="model.tf",
-    output_signaturedefs=True,
+    copy_onnx_input_output_names_to_tflite=True,
     non_verbose=True,
 )
-
-# Let's check TensorFlow model
-tf_model = tf.saved_model.load("model.tf")
-tf_output = tf_model.signatures["serving_default"](
-    x=tf.constant((10,), dtype=tf.int64),
-    y=tf.constant((2,), dtype=tf.int64),
-)
-print("[TF] Model Predictions:", tf_output)
-
-# Rerun TFLite conversion but from saved model
-converter = tf.lite.TFLiteConverter.from_saved_model("model.tf")
-converter.target_spec.supported_ops = [
-    tf.lite.OpsSet.TFLITE_BUILTINS,
-    tf.lite.OpsSet.SELECT_TF_OPS,
-]
-tf_lite_model = converter.convert()
-with open("model.tf/model_float32.tflite", "wb") as f:
-    f.write(tf_lite_model)
 
 # Now, test the newer TFLite model
 interpreter = tf.lite.Interpreter(model_path="model.tf/model_float32.tflite")
@@ -224,17 +206,13 @@ print("[TFLite] Model Predictions:", tt_lite_output)
     array(12, dtype=int64),
     array(8, dtype=int64)
   ]
-[TF] Model Predictions:
-  {
-    'add': <tf.Tensor: shape=(1,), dtype=int64, numpy=array([12])>,
-    'sub': <tf.Tensor: shape=(1,), dtype=int64, numpy=array([8])>
-  }
 [TFLite] Model Predictions:
   {
     'add': array([12]),
     'sub': array([8])
   }
 ```
+![image](https://user-images.githubusercontent.com/33194443/223318437-b89e56c1-4376-4e91-8c0c-08d29a604637.png)
 
 If you want to embed label maps, quantization parameters, descriptions, etc. into your tflite file, you can refer to the official tutorial and try it yourself. For now, this tool does not plan to implement the ability to append metadata, as I do not want to write byte arrays to the tflite file that are not essential to its operation.
 

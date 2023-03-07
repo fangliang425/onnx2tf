@@ -150,7 +150,11 @@ def make_node(
             param_name=graph_node_input.name,
             **kwargs,
         )
-        new_values.append(value)
+        new_values.append(
+            value \
+                if not isinstance(value, np.ndarray) \
+                    else tf.convert_to_tensor(value)
+        )
     values = new_values
 
     # TensorFlow does not support Concat for scalar values, so convert to tensor
@@ -160,11 +164,12 @@ def make_node(
 
     # Generate input OPs for TensorFlow subgraphs
     # For inference testing on OP stand-alone
-    tf_partial_model_inputs: List[tf.keras.Input] = \
-        make_tf_partial_model_inputs(
-            input_tensors=values
-        )
-    tf_partial_model_outputs = None
+    if kwargs['acc_check']:
+        tf_partial_model_inputs: List[tf.keras.Input] = \
+            make_tf_partial_model_inputs(
+                input_tensors=values
+            )
+        tf_partial_model_outputs = None
 
     # Generation of TF OP
     ### Overall model
@@ -175,7 +180,7 @@ def make_node(
             name=graph_node.name,
         )
     ### Partial model
-    if tf_partial_model_inputs is not None:
+    if kwargs['acc_check'] and tf_partial_model_inputs is not None:
         test_datas = []
         for graph_node_input, value in zip(graph_node.inputs, values):
             test_data = None

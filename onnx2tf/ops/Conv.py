@@ -215,17 +215,25 @@ def make_node(
         depthwise_filter_shape = list(input_weights_shape[0:2]) + [-1, input_weights_shape[3] // group]
         input_weights = tf.reshape(input_weights, depthwise_filter_shape)
 
+    input_weights = input_weights \
+        if not isinstance(input_weights, np.ndarray) \
+            else tf.convert_to_tensor(input_weights)
+    input_bias = input_bias \
+        if not isinstance(input_bias, np.ndarray) \
+            else tf.convert_to_tensor(input_bias)
+
     # Generate input OPs for TensorFlow subgraphs
     # For inference testing on OP stand-alone
-    tf_partial_model_inputs: List[tf.keras.Input] = \
-        make_tf_partial_model_inputs(
-            input_tensors=[
-                input_tensor,
-            ]
-        )
-    tf_partial_model_tensors = tf_partial_model_inputs[0] \
-        if tf_partial_model_inputs is not None else None
-    tf_partial_model_outputs = None
+    if kwargs['acc_check']:
+        tf_partial_model_inputs: List[tf.keras.Input] = \
+            make_tf_partial_model_inputs(
+                input_tensors=[
+                    input_tensor,
+                ]
+            )
+        tf_partial_model_tensors = tf_partial_model_inputs[0] \
+            if tf_partial_model_inputs is not None else None
+        tf_partial_model_outputs = None
 
     def tf_partial_model_inference(
         *,
@@ -296,7 +304,7 @@ def make_node(
                     )
                 tf_op_type = tf.nn.convolution
                 ### Partial model
-                if tf_partial_model_inputs is not None:
+                if kwargs['acc_check'] and tf_partial_model_inputs is not None:
                     tf_partial_model_outputs = \
                         [
                             tf.add(
@@ -344,7 +352,7 @@ def make_node(
                         )
                     tf_op_type = 'GroupedConvolution1D'
                     ### Partial model
-                    if tf_partial_model_inputs is not None:
+                    if kwargs['acc_check'] and tf_partial_model_inputs is not None:
                         tf_partial_model_outputs = \
                             [
                                 tf.add(
@@ -387,7 +395,7 @@ def make_node(
                         )
                     tf_op_type = 'GroupedConvolution2D'
                     ### Partial model
-                    if tf_partial_model_inputs is not None:
+                    if kwargs['acc_check'] and tf_partial_model_inputs is not None:
                         tf_partial_model_outputs = \
                             [
                                 tf.add(
@@ -432,7 +440,7 @@ def make_node(
                 #         )
                 #     tf_op_type = 'GroupedConvolution3D'
                 #     ### Partial model
-                #     if tf_partial_model_inputs is not None:
+                #     if kwargs['acc_check'] and tf_partial_model_inputs is not None:
                 #         tf_partial_model_outputs = \
                 #             [
                 #                 tf.add(
@@ -479,7 +487,7 @@ def make_node(
                         )
                     tf_op_type = tf.nn.convolution
                     ### Partial model
-                    if tf_partial_model_inputs is not None:
+                    if kwargs['acc_check'] and tf_partial_model_inputs is not None:
                         partial_input_tensor_splits = tf.split(tf_partial_model_tensors, num_or_size_splits=group, axis=-1)
                         partial_weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
                         tf_partial_model_outputs = \
@@ -523,7 +531,7 @@ def make_node(
                 )
             tf_op_type = tf.nn.depthwise_conv2d
             ### Partial model
-            if tf_partial_model_inputs is not None:
+            if kwargs['acc_check'] and tf_partial_model_inputs is not None:
                 tf_partial_model_outputs = \
                     [
                         tf.add(
@@ -558,7 +566,7 @@ def make_node(
                     )
                 tf_op_type = tf.nn.convolution
                 ### Partial model
-                if tf_partial_model_inputs is not None:
+                if kwargs['acc_check'] and tf_partial_model_inputs is not None:
                     tf_partial_model_outputs = \
                         [
                             tf.nn.convolution(
@@ -600,7 +608,7 @@ def make_node(
                         )(input_tensor)
                     tf_op_type = 'GroupedConvolution1D'
                     ### Partial model
-                    if tf_partial_model_inputs is not None:
+                    if kwargs['acc_check'] and tf_partial_model_inputs is not None:
                         tf_partial_model_outputs = \
                             [
                                 Conv1D(
@@ -637,7 +645,7 @@ def make_node(
                         )(input_tensor)
                     tf_op_type = 'GroupedConvolution2D'
                     ### Partial model
-                    if tf_partial_model_inputs is not None:
+                    if kwargs['acc_check'] and tf_partial_model_inputs is not None:
                         tf_partial_model_outputs = \
                             [
                                 Conv2D(
@@ -676,7 +684,7 @@ def make_node(
                 #         )(input_tensor)
                 #     tf_op_type = 'GroupedConvolution3D'
                 #     ### Partial model
-                #     if tf_partial_model_inputs is not None:
+                #     if kwargs['acc_check'] and tf_partial_model_inputs is not None:
                 #         tf_partial_model_outputs = \
                 #             [
                 #                 Conv3D(
@@ -717,7 +725,7 @@ def make_node(
                         )
                     tf_op_type = tf.nn.convolution
                     ### Partial model
-                    if tf_partial_model_inputs is not None:
+                    if kwargs['acc_check'] and tf_partial_model_inputs is not None:
                         partial_input_tensor_splits = tf.split(tf_partial_model_tensors, num_or_size_splits=group, axis=-1)
                         partial_weight_splits = tf.split(input_weights, num_or_size_splits=group, axis=-1)
                         tf_partial_model_outputs = \
@@ -755,7 +763,7 @@ def make_node(
                 )
             tf_op_type = tf.nn.depthwise_conv2d
             ### Partial model
-            if tf_partial_model_inputs is not None:
+            if kwargs['acc_check'] and tf_partial_model_inputs is not None:
                 tf_partial_model_outputs = \
                     [
                         tf.nn.depthwise_conv2d(
