@@ -2,6 +2,7 @@
 
 import os
 import glob
+import tqdm
 import re
 __path__ = (os.path.dirname(__file__), )
 with open(os.path.join(__path__[0], '__init__.py')) as f:
@@ -960,7 +961,7 @@ def convert(
             def representative_dataset_gen(data_path, num=100):
                 image_paths = glob.glob(data_path + os.sep + "*.jpg")
 
-                for n, image_path in enumerate(image_paths):
+                for n, image_path in tqdm.tqdm(enumerate(image_paths)):
                     img = cv2.imread(image_path)
                     img = img[..., ::-1]  # BGR->RGB
                     img = cv2.resize(img, (model.inputs[0].shape[2], model.inputs[0].shape[1]))
