@@ -474,7 +474,7 @@ def convert(
                 replacement_parameters = json.load(f)['operations']
                 for operations in replacement_parameters:
                     operations['op_name'] = operations['op_name'].replace(':','_')
-                    if output_signaturedefs:
+                    if output_signaturedefs or output_integer_quantized_tflite:
                         operations['op_name'] = re.sub('^/', 'wa/', operations['op_name'])
         except json.decoder.JSONDecodeError as ex:
             print(
@@ -703,7 +703,7 @@ def convert(
             # substitution because saved_model does not allow colons
             graph_input.name = graph_input.name.replace(':','_')
             # Substitution because saved_model does not allow leading slashes in op names
-            if output_signaturedefs:
+            if output_signaturedefs or output_integer_quantized_tflite:
                 graph_input.name = re.sub('^/', 'wa/', graph_input.name)
             op.make_node(
                 graph_input=graph_input,
@@ -729,7 +729,7 @@ def convert(
             # substitution because saved_model does not allow colons
             graph_node.name = graph_node.name.replace(':','_')
             # Substitution because saved_model does not allow leading slashes in op names
-            if output_signaturedefs:
+            if output_signaturedefs or output_integer_quantized_tflite:
                 graph_node.name = re.sub('^/', 'wa/', graph_node.name)
             op.make_node(
                 graph_node=graph_node,
@@ -749,7 +749,7 @@ def convert(
         # Bring back output names from ONNX model
         for output, name in zip(outputs, output_names):
             output.node.layer._name = name.replace(':','_')
-            if output_signaturedefs:
+            if output_signaturedefs or output_integer_quantized_tflite:
                 output.node.layer._name = re.sub('^/', '', output.node.layer._name)
 
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
@@ -785,7 +785,7 @@ def convert(
             # concrete_func
             if not non_verbose:
                 print(f'{Color.REVERCE}saved_model output started{Color.RESET}', '=' * 58)
-            if not output_signaturedefs:
+            if not output_signaturedefs and not output_integer_quantized_tflite:
                 tf.saved_model.save(concrete_func, output_folder_path)
             else:
                 tf.saved_model.save(model, output_folder_path)
@@ -900,6 +900,28 @@ def convert(
 
         # Quantized TFLite
         if output_integer_quantized_tflite:
+            # Get signatures/input keys
+            if not non_verbose:
+                SIGNATURE_KEY = 'serving_default'
+                loaded_saved_model = tf.saved_model.load(
+                    output_folder_path
+                ).signatures[SIGNATURE_KEY]
+                input_keys = list(loaded_saved_model.structured_input_signature[1].keys())
+                input_shapes = [v.shape for v in loaded_saved_model.structured_input_signature[1].values()]
+                input_dtypes = [v.dtype for v in loaded_saved_model.structured_input_signature[1].values()]
+                print(f'{Color.BLUE}Input signature information for quantization{Color.RESET}')
+                print(f'{Color.BLUE}signature_name{Color.RESET}: {SIGNATURE_KEY}')
+                for idx, (input_key, input_shape, input_dtype) in enumerate(zip(input_keys, input_shapes, input_dtypes)):
+                    print(
+                        f'{Color.BLUE}input_name.{idx}{Color.RESET}: {input_key} '+
+                        f'{Color.BLUE}shape{Color.RESET}: {input_shape} '+
+                        f'{Color.BLUE}dtype{Color.RESET}: {input_dtype}'
+                    )
+
+            # INT8 Converter
+            converter = tf.lite.TFLiteConverter.from_saved_model(
+                output_folder_path,
+            )
             # Dynamic Range Quantization
             try:
                 converter.optimizations = [tf.lite.Optimize.DEFAULT]
@@ -958,6 +980,14 @@ def convert(
             print(f"Calibration dataset is {quant_calib_data_path}")
 
             # representative_dataset_gen
+            def representative_dataset_gen():
+                for idx in range(data_count):
+                    yield_data_dict = {}
+                    for model_input_name in model_input_name_list:
+                        calib_data, mean, std = calib_data_dict[model_input_name]
+                        normalized_calib_data = (calib_data[idx] - mean) / std
+                        yield_data_dict[model_input_name] = normalized_calib_data
+                    yield yield_data_dict
             def representative_dataset_gen(data_path, num=100):
                 image_paths = glob.glob(data_path + os.sep + "*.jpg")
 
