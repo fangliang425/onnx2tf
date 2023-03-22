@@ -44,7 +44,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.7.29
+  ghcr.io/pinto0309/onnx2tf:1.7.33
 
   or
 
@@ -110,6 +110,10 @@ $ onnx2tf -i resnet18-v1-7.onnx -osd
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 $ onnx2tf -i resnet18-v1-7.onnx -oh5
 
+# Keras keras_v3 format
+$ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
+$ onnx2tf -i resnet18-v1-7.onnx -okv3
+
 # INT8 Quantization, Full INT8 Quantization
 # INT8 Quantization with INT16 activation, Full INT8 Quantization with INT16 activation
 # Dynamic Range Quantization
@@ -118,6 +122,15 @@ $ wget https://github.com/PINTO0309/onnx2tf/releases/download/1.1.1/emotion-ferp
 $ onnx2tf -i emotion-ferplus-8.onnx -oiqt
 # INT8 Quantization (per-tensor)
 $ onnx2tf -i emotion-ferplus-8.onnx -oiqt -qt per-tensor
+
+# Split the model at the middle position for debugging
+# Specify the output name of the OP
+$ onnx2tf -i resnet18-v1-7.onnx -onimc resnetv15_stage2_conv1_fwd resnetv15_stage2_conv2_fwd
+
+# Suppress generation of Flex OP (Gelu/Erf)
+# [Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf]
+$ wget https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_readme/gelu_11.onnx
+$ onnx2tf -i gelu_11.onnx -rtpo Erf
 
 # Parameter replacement (Resize,Transpose,Softmax)
 $ rm replace.json
@@ -227,7 +240,57 @@ If you want to embed label maps, quantization parameters, descriptions, etc. int
   https://www.tensorflow.org/lite/models/convert/metadata
   ![image](https://user-images.githubusercontent.com/33194443/221345428-639ffa41-a03c-4d0b-bd72-9c23fb3847f3.png)
 
-### 6. Calibration data creation for INT8 quantization
+### 6. If the accuracy of the INT8 quantized model degrades significantly
+It is a matter of model structure. The activation function (`SiLU`/`Swish`), kernel size and stride for `Pooling`, and kernel size and stride for `Conv` should be completely revised. See: https://github.com/PINTO0309/onnx2tf/issues/244#issuecomment-1475128445
+
+If you want to see the difference in quantization error between `SiLU` and `ReLU`, please check this Gist by [@motokimura](https://gist.github.com/motokimura) who helped us in our research. Thanks Motoki!
+
+Gist: [Quantization error simulation of SiLU (Swish) activation](https://gist.github.com/motokimura/1a90c0b8c5628914b99a81cd91369636)
+
+The accuracy error rates after quantization for different activation functions are shown in the figure below. The graph plots the distribution of absolute error, so a position with a higher value on the horizontal axis indicates a larger error.
+
+![image](https://user-images.githubusercontent.com/33194443/226542318-aa7fc743-ffde-4245-b15f-b38b433ce28a.png)
+
+- e.g. YOLOv8 https://docs.openvino.ai/latest/notebooks/230-yolov8-optimization-with-output.html
+- e.g. YOLOX-Nano https://github.com/TexasInstruments/edgeai-yolox
+    |Before|After|
+    |:-:|:-:|
+    |`Swish`/`SiLU`<br>![image](https://user-images.githubusercontent.com/33194443/226184543-408e0814-3c75-42f6-a640-377004982ba3.png)|`ReLU`<br>![image](https://user-images.githubusercontent.com/33194443/226184570-af4df0aa-e0d2-4fd7-afca-50dc6622977d.png)|
+    |`DepthwiseConv2D`<br>![image](https://user-images.githubusercontent.com/33194443/226185407-ebf3f26d-a483-4fdd-8b27-266e4ba149ab.png)|`Conv2D`<br>![image](https://user-images.githubusercontent.com/33194443/226185388-2d2afa7e-6fd6-44a7-b0bc-705a5b22f036.png)|
+    |`MaxPool`, kernel_size=5x5,9x9,13x13<br>![image](https://user-images.githubusercontent.com/33194443/226184640-8f942741-1109-4a95-b8da-ca49885879cd.png)|`MaxPool`, kernel_size=3x3<br>![image](https://user-images.githubusercontent.com/33194443/226184604-2c289b9d-7c15-4f84-b4ce-2838ecf4e6d0.png)|
+
+    ```
+    ### Float32 - YOLOX-Nano
+    (1, 52, 52, 85)
+    array([[[
+        [ 0.971787,  0.811184,  0.550566, ..., -5.962632, -7.403673, -6.735206],
+        [ 0.858804,  1.351296,  1.231673, ..., -6.479690, -8.277064, -7.664936],
+        [ 0.214827,  1.035119,  1.458006, ..., -6.291425, -8.229385, -7.761562],
+            ...,
+        [ 0.450116,  1.391900,  1.533354, ..., -5.672194, -7.121591, -6.880231],
+        [ 0.593133,  2.112723,  0.968755, ..., -6.150078, -7.370633, -6.874294],
+        [ 0.088263,  1.985220,  0.619998, ..., -5.507928, -6.914980, -6.234259]]]]),
+
+    ### INT8 - YOLOX-Nano
+    (1, 52, 52, 85)
+    array([[[
+        [ 0.941908,  0.770652,  0.513768, ..., -5.993958, -7.449634, -6.850238],
+        [ 0.856280,  1.284420,  1.198792, ..., -6.507727, -8.391542, -7.792146],
+        [ 0.256884,  0.941908,  1.455676, ..., -6.336471, -8.305914, -7.877774],
+            ...,
+        [ 0.342512,  1.370048,  1.541304, ..., -5.737075, -7.192750, -7.107122],
+        [ 0.513768,  2.226327,  1.027536, ..., -6.165215, -7.449634, -7.021494],
+        [ 0.085628,  2.055072,  0.685024, ..., -5.480191, -7.021494, -6.422099]]]]),
+    ```
+
+- Other recommended replacement OP
+
+    |Before|After|
+    |:-:|:-:|
+    |`HardSwish`<br>![image](https://user-images.githubusercontent.com/33194443/226223099-c7344bcf-d24d-4b35-a1d6-2a03dbfce8c7.png)|`ReLU`<br>![image](https://user-images.githubusercontent.com/33194443/226223213-bd714994-f353-416e-9f54-6d0954a70bb8.png)|
+
+
+### 7. Calibration data creation for INT8 quantization
 Calibration data (.npy) for INT8 quantization (`-qcind`) is generated as follows. This is a sample when the data used for training is image data. See: https://github.com/PINTO0309/onnx2tf/issues/222
 
 https://www.tensorflow.org/lite/performance/post_training_quantization
@@ -272,7 +335,7 @@ e.g.
 """
 ```
 
-### 7. INT8 quantization of models with multiple inputs requiring non-image data
+### 8. INT8 quantization of models with multiple inputs requiring non-image data
 If you do not need to perform INT8 quantization with this tool alone, the following method is the easiest.
 
 The `-osd` option will output a `saved_model.pb` in the `saved_model` folder with the full size required for quantization. That is, a default signature named `serving_default` is embedded in `.pb`. The `-b` option is used to convert the batch size by rewriting it as a static integer.
@@ -291,7 +354,7 @@ onnx2tf -i bertsquad-12.onnx -b 1 -osd -cotof
 Use the `saved_model_cli` command to check the `saved_model` signature. INT8 quantization calibration using signatures allows correct control of the input order of data for calibration. Therefore, calibration with signatures is recommended for INT8 quantization of models with multiple inputs.
 
 ```bash
-saved_model_cli show --dir saved_model/ --all
+saved_model_cli show --dir saved_model/ --tag_set serve --signature_def serving_default
 
 The given SavedModel SignatureDef contains the following input(s):
   inputs['input_ids_0'] tensor_info:
@@ -352,7 +415,7 @@ https://www.tensorflow.org/lite/performance/post_training_quantization
 
 See: https://github.com/PINTO0309/onnx2tf/issues/248
 
-### 8. Conversion to TensorFlow.js
+### 9. Conversion to TensorFlow.js
 When converting to TensorFlow.js, process as follows.
 
 ```bash
@@ -366,9 +429,12 @@ tensorflowjs_converter \
 saved_model \
 tfjs_model
 ```
+
+See: https://github.com/tensorflow/tfjs/tree/master/tfjs-converter
+
 ![image](https://user-images.githubusercontent.com/33194443/224186149-0b9ce9dc-fe09-48d4-b430-6cc3d0687140.png)
 
-### 9. Conversion to CoreML
+### 10. Conversion to CoreML
 When converting to CoreML, process as follows. The `-k` option is for conversion while maintaining the input channel order in ONNX's NCHW format.
 
 ```bash
@@ -387,6 +453,9 @@ model = ct.convert(
 )
 model.save(f'{FOLDER_PATH}/model.mlmodel')
 ```
+
+See: https://github.com/apple/coremltools
+
 ![image](https://user-images.githubusercontent.com/33194443/224185761-bd0c086c-65e8-4de7-a500-f49b666eea0a.png)
 
 ## CLI Parameter
@@ -611,7 +680,7 @@ optional arguments:
     Disable GroupConvolution and replace it with SeparableConvolution for
     output to saved_model format.
 
-  -ebu, --enaable_batchmatmul_unfold
+  -ebu, --enable_batchmatmul_unfold
     BatchMatMul is separated batch by batch to generate a primitive MatMul.
 
   -dsft, --disable_suppression_flextranspose
@@ -817,7 +886,7 @@ convert(
   keep_shape_absolutely_input_names: Optional[List[str]] = None,
   output_names_to_interrupt_model_conversion: Union[List[str], NoneType] = None,
   disable_group_convolution: Union[bool, NoneType] = False,
-  enaable_batchmatmul_unfold: Optional[bool] = False,
+  enable_batchmatmul_unfold: Optional[bool] = False,
   disable_suppression_flextranspose: Optional[bool] = False,
   number_of_dimensions_after_flextranspose_compression: Optional[int] = 5,
   optimization_for_gpu_delegate: Optional[bool] = False,
@@ -1017,7 +1086,7 @@ convert(
       Disable GroupConvolution and replace it with SeparableConvolution for
       output to saved_model format.
 
-    enaable_batchmatmul_unfold: Optional[bool]
+    enable_batchmatmul_unfold: Optional[bool]
       BatchMatMul is separated batch by batch to generate a primitive MatMul.
 
     disable_suppression_flextranspose: Optional[bool]
@@ -1731,6 +1800,7 @@ The above differences often cannot be dealt with by simply converting the model 
 3. https://pytorch.org/vision/stable/models.html
 4. https://tfhub.dev/
 5. https://www.kaggle.com/models
+6. https://github.com/TexasInstruments/edgeai-modelzoo
 
 ## Contributors
 <a href="https://github.com/pinto0309/onnx2tf/graphs/contributors">
