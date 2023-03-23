@@ -1,5 +1,5 @@
 # onnx2tf
-Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras format (NHWC). The purpose of this tool is to solve the massive Transpose extrapolation problem in [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow) ([onnx-tf](https://pypi.org/project/onnx-tf/)). I don't need a Star, but give me a pull request.
+Self-Created Tools to convert ONNX files (NCHW) to TensorFlow/TFLite/Keras format (NHWC). The purpose of this tool is to solve the massive Transpose extrapolation problem in [onnx-tensorflow](https://github.com/onnx/onnx-tensorflow) ([onnx-tf](https://pypi.org/project/onnx-tf/)). I don't need a Star, but give me a pull request. Since I am adding challenging model optimizations and fixing bugs almost daily, I frequently embed potential bugs that would otherwise break through CI's regression testing. Therefore, if you encounter new problems, I recommend that you try a package that is a few versions older, or try the latest package that will be released in a few days.
 
 <p align="center">
   <img src="https://user-images.githubusercontent.com/33194443/193840307-fa69eace-05a9-4d93-9c5d-999cf88af28e.png" />
@@ -21,7 +21,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 - onnx-simplifier
 - onnx_graphsurgeon
 - simple_onnx_processing_tools
-- tensorflow==2.12.0rc1
+- tensorflow==2.12.0
 - flatbuffers-compiler (Optional, Only when using the `-coion` option. Executable file named `flatc`.)
   ```bash
   # Custom flatc binary for Ubuntu 20.04+
@@ -44,7 +44,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.7.34
+  ghcr.io/pinto0309/onnx2tf:1.8.0
 
   or
 
@@ -82,7 +82,7 @@ or
     && python3.9 -m pip install -U distlib
   !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.7 1
   !sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 2
-  !python3.9 -m pip install tensorflow==2.12.0rc1 \
+  !python3.9 -m pip install tensorflow==2.12.0 \
     && python3.9 -m pip install -U onnx \
     && python3.9 -m pip install -U nvidia-pyindex \
     && python3.9 -m pip install -U onnx-graphsurgeon \
