@@ -44,7 +44,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   $ docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:1.8.0
+  ghcr.io/pinto0309/onnx2tf:1.8.1
 
   or
 
@@ -98,11 +98,16 @@ or
 Only patterns that are considered to be used particularly frequently are described. In addition, there are several other options, such as disabling Flex OP and additional options to improve inference performance. See: [CLI Parameter](#cli-parameter)
 ```bash
 # Float32, Float16
+# This is the fastest way to generate tflite,
+# but the accompanying saved_model will not have a signature.
+# "ValueError: Only support at least one signature key."
+# If you are having trouble with this error, please use the `-osd` option.
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 $ onnx2tf -i resnet18-v1-7.onnx
 
-# saved_model with signaturedefs added
-# Output in the form of saved_model that can be used for serving or conversion to other frameworks
+# saved_model with signaturedefs added.
+# Output in the form of saved_model that can be used for serving
+# or conversion to other frameworks.
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 $ onnx2tf -i resnet18-v1-7.onnx -osd
 
@@ -110,7 +115,7 @@ $ onnx2tf -i resnet18-v1-7.onnx -osd
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 $ onnx2tf -i resnet18-v1-7.onnx -oh5
 
-# Keras keras_v3 format
+# Keras keras_v3 format (TensorFlow v2.12.0 or later only)
 $ wget https://github.com/PINTO0309/onnx2tf/releases/download/0.0.2/resnet18-v1-7.onnx
 $ onnx2tf -i resnet18-v1-7.onnx -okv3
 
@@ -127,10 +132,23 @@ $ onnx2tf -i emotion-ferplus-8.onnx -oiqt -qt per-tensor
 # Specify the output name of the OP
 $ onnx2tf -i resnet18-v1-7.onnx -onimc resnetv15_stage2_conv1_fwd resnetv15_stage2_conv2_fwd
 
-# Suppress generation of Flex OP (Gelu/Erf)
+# Suppress generation of Flex OP and replace with Pseudo-Function
 # [Asin, Acos, Atan, Abs, PReLU, LeakyReLU, Power, GatherND, Neg, HardSwish, Erf]
+# Below is a sample of replacing GELU / Erf with another set of operations.
 $ wget https://s3.ap-northeast-2.wasabisys.com/temp-models/onnx2tf_readme/gelu_11.onnx
 $ onnx2tf -i gelu_11.onnx -rtpo Erf
+
+# High-dimensional Transpose decomposition
+# If you do not like FlexTranspose being generated, try `-nodafc`.
+# Suppresses the generation of FlexTranspose by decomposing Transpose
+# to the specified number of dimensions.
+# In TensorFlow v2.12.0 and later, up to 6 dimensions are converted to normal Transpose;
+# in v2.11.0 and earlier, up to 5 dimensions are converted to normal Transpose.
+# Note that specifying `2` for the `-nodafc` option causes all Transpose OPs to disappear
+# from the model structure.
+# Below is an example of decomposing a Transpose of 5 or more dimensions into a Transpose
+# of 4 dimensions.
+$ onnx2tf -i xxxx.onnx -nodafc 4
 
 # Parameter replacement (Resize,Transpose,Softmax)
 $ rm replace.json
@@ -148,6 +166,10 @@ The `-cotof` option only compares the original ONNX and converted TensorFlow (Ke
 
 ```
 $ onnx2tf -i mobilenetv2-12.onnx -ois input:1,3,224,224 -cotof -cotoa 1e-1
+
+or
+
+$ onnx2tf -i mobilenetv2-12.onnx -b 1 -cotof -cotoa 1e-1
 ```
 ![image](https://user-images.githubusercontent.com/33194443/216901668-5fdb1e38-8670-46a4-b4b9-8a774fa7545e.png)
 
@@ -241,13 +263,13 @@ If you want to embed label maps, quantization parameters, descriptions, etc. int
   ![image](https://user-images.githubusercontent.com/33194443/221345428-639ffa41-a03c-4d0b-bd72-9c23fb3847f3.png)
 
 ### 6. If the accuracy of the INT8 quantized model degrades significantly
-It is a matter of model structure. The activation function (`SiLU`/`Swish`), kernel size and stride for `Pooling`, and kernel size and stride for `Conv` should be completely revised. See: https://github.com/PINTO0309/onnx2tf/issues/244#issuecomment-1475128445
+It is a matter of model structure. The activation function (`SiLU`/`Swish`), kernel size and stride for `Pooling`, and kernel size and stride for `Conv` should be completely revised. See: https://github.com/PINTO0309/onnx2tf/issues/244#issuecomment-1475128445, and  https://github.com/PINTO0309/onnx2tf/issues/269
 
 If you want to see the difference in quantization error between `SiLU` and `ReLU`, please check this Gist by [@motokimura](https://gist.github.com/motokimura) who helped us in our research. Thanks Motoki!
 
 Gist: [Quantization error simulation of SiLU (Swish) activation](https://gist.github.com/motokimura/1a90c0b8c5628914b99a81cd91369636)
 
-The accuracy error rates after quantization for different activation functions are shown in the figure below. The graph plots the distribution of absolute error, so a position with a higher value on the horizontal axis indicates a larger error.
+The accuracy error rates after quantization for different activation functions are shown in the figure below. The graph plots the distribution of absolute error, so a position with a higher value on the horizontal axis indicates a larger error. The vertical axis is the number of samples. `SiLU (Swish)` produces catastrophic errors after INT8 quantization.
 
 ![image](https://user-images.githubusercontent.com/33194443/226542318-aa7fc743-ffde-4245-b15f-b38b433ce28a.png)
 
